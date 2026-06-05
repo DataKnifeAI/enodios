@@ -13,6 +13,8 @@ GPU_UTIL="${ENODIOS_GPU_UTIL:-0.75}"
 KV_CACHE_DTYPE="${ENODIOS_KV_CACHE_DTYPE:-fp8}"
 PROVIDER_NAME="${ENODIOS_PROVIDER:-enodios}"
 HERMES_CONFIG="${HERMES_CONFIG:-$HOME/.hermes/config.yaml}"
+LOG_FILE="${ENODIOS_LOG:-$DATA/vllm.log}"
+PID_FILE="${ENODIOS_PID_FILE:-$DATA/vllm.pid}"
 
 usage() {
   cat <<EOF
@@ -22,9 +24,10 @@ Usage: enodios <command>
 
 Commands:
   install     Install uv venv + vLLM, link this CLI to ~/.local/bin
-  start       Run vLLM in foreground (Ctrl+C to stop)
+  start       Run vLLM (foreground by default; -b/--background to detach)
   stop        Stop vLLM processes for this stack
   doctor      Check GPU, CUDA, venv, and endpoint health
+  recommend   Detect GPU VRAM and suggest model/settings for Hermes Agent
   bench       Tool-call latency test against vLLM
   configure   Point Hermes config at local vLLM
   status      Show vLLM /v1/models status
@@ -33,6 +36,7 @@ Commands:
 Environment:
   ENODIOS_DATA, ENODIOS_VENV, ENODIOS_PORT, ENODIOS_MODEL
   ENODIOS_GPU_UTIL, ENODIOS_MAX_MODEL_LEN, ENODIOS_PROVIDER
+  ENODIOS_LOG, ENODIOS_PID_FILE
 
 Docs: https://dataknifeai.github.io/enodios/
 Repo: https://github.com/DataKnifeAI/enodios
@@ -95,8 +99,9 @@ EOF
   fi
   echo ""
   echo "Done. Next:"
+  echo "  enodios recommend  # GPU → model/settings for Hermes Agent"
   echo "  enodios doctor"
-  echo "  enodios start      # separate terminal"
+  echo "  enodios start -b   # background (or foreground in another terminal)"
   echo "  enodios configure"
   echo "  hermes chat"
 }
@@ -115,15 +120,63 @@ vllm_env() {
   fi
 }
 
-cmd_start() {
+vllm_ready() {
+  curl -sf --max-time 2 "http://127.0.0.1:${PORT}/v1/models" &>/dev/null
+}
+
+start_usage() {
+  cat <<EOF
+Usage: enodios start [-b|--background]
+
+  (default)   Run vLLM in foreground (Ctrl+C to stop)
+  -b, --background   Detach; logs to \$ENODIOS_LOG (default: $LOG_FILE)
+EOF
+}
+
+prepare_vllm() {
   require_venv
   # shellcheck disable=SC1091
   source "$VENV/bin/activate"
   vllm_env
-  echo "Starting vLLM on http://127.0.0.1:${PORT}/v1 (model=${SERVED_NAME}, context=${MAX_LEN})"
   extra_args=()
   [[ -n "$KV_CACHE_DTYPE" ]] && extra_args+=(--kv-cache-dtype "$KV_CACHE_DTYPE")
-  exec vllm serve "$MODEL" \
+}
+
+cmd_start() {
+  local background=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -b|--background) background=1; shift ;;
+      -h|--help) start_usage; return 0 ;;
+      *) echo "Unknown option: $1"; start_usage; exit 1 ;;
+    esac
+  done
+
+  if vllm_ready; then
+    echo "vLLM already running on http://127.0.0.1:${PORT}/v1"
+    [[ -f "$PID_FILE" ]] && echo "pid: $(cat "$PID_FILE")"
+    return 0
+  fi
+
+  prepare_vllm
+  echo "Starting vLLM on http://127.0.0.1:${PORT}/v1 (model=${SERVED_NAME}, context=${MAX_LEN})"
+
+  if [[ "$background" -eq 0 ]]; then
+    exec vllm serve "$MODEL" \
+      --host 127.0.0.1 \
+      --port "$PORT" \
+      --max-model-len "$MAX_LEN" \
+      --gpu-memory-utilization "$GPU_UTIL" \
+      --quantization awq \
+      --enable-auto-tool-choice \
+      --tool-call-parser hermes \
+      --served-model-name "$SERVED_NAME" \
+      --no-enable-flashinfer-autotune \
+      "${extra_args[@]}"
+  fi
+
+  mkdir -p "$DATA"
+  nohup vllm serve "$MODEL" \
     --host 127.0.0.1 \
     --port "$PORT" \
     --max-model-len "$MAX_LEN" \
@@ -133,18 +186,318 @@ cmd_start() {
     --tool-call-parser hermes \
     --served-model-name "$SERVED_NAME" \
     --no-enable-flashinfer-autotune \
-    "${extra_args[@]}"
+    "${extra_args[@]}" >>"$LOG_FILE" 2>&1 &
+  local pid=$!
+  echo "$pid" >"$PID_FILE"
+  echo "Background pid: $pid"
+  echo "Log: $LOG_FILE"
+
+  for _ in $(seq 1 90); do
+    if vllm_ready; then
+      echo "Ready: http://127.0.0.1:${PORT}/v1"
+      return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "ERROR: vLLM exited during startup. Last log lines:"
+      tail -20 "$LOG_FILE" 2>/dev/null || true
+      rm -f "$PID_FILE"
+      return 1
+    fi
+    sleep 2
+  done
+
+  echo "WARN: still starting after 3m — check: tail -f $LOG_FILE"
+  return 0
 }
 
 cmd_stop() {
+  if [[ -f "$PID_FILE" ]]; then
+    kill "$(cat "$PID_FILE")" 2>/dev/null || true
+    rm -f "$PID_FILE"
+  fi
   pkill -f "${VENV}/bin/vllm serve" 2>/dev/null || true
   pkill -f 'vllm serve.*hermes3:8b' 2>/dev/null || true
   sleep 1
-  if curl -sf --max-time 2 "http://127.0.0.1:${PORT}/v1/models" &>/dev/null; then
+  if vllm_ready; then
     echo "WARN: port ${PORT} still responding"
   else
     echo "vLLM stopped (port ${PORT} down)"
   fi
+}
+
+cmd_recommend() {
+  python3 - "$@" <<'PY'
+import json, os, shutil, subprocess, sys
+
+HERMES_MIN_CTX = 65536
+DATA = os.path.expanduser(os.environ.get("ENODIOS_DATA", os.path.expanduser("~/.local/share/enodios")))
+
+def query_gpu():
+    if not shutil.which("nvidia-smi"):
+        return None
+    r = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,name,memory.total,memory.free,memory.used",
+            "--format=csv,noheader,nounits",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    rows = []
+    for line in r.stdout.strip().splitlines():
+        idx, name, total, free, used = [x.strip() for x in line.split(",")]
+        rows.append(
+            {
+                "index": int(idx),
+                "name": name,
+                "total_mib": int(total),
+                "free_mib": int(free),
+                "used_mib": int(used),
+            }
+        )
+    return rows
+
+def other_compute_vram():
+    r = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-compute-apps=pid,process_name,used_gpu_memory",
+            "--format=csv,noheader,nounits",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    apps = []
+    if r.returncode == 0:
+        for line in r.stdout.strip().splitlines():
+            if not line.strip():
+                continue
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 3:
+                apps.append(
+                    {
+                        "pid": parts[0],
+                        "name": parts[1],
+                        "vram_mib": int(parts[2]) if parts[2].isdigit() else 0,
+                    }
+                )
+    return apps
+
+def pick_profile(total_mib, free_mib, shared_gpu):
+    awq = {
+        "model": "solidrust/Hermes-3-Llama-3.1-8B-AWQ",
+        "served_name": "hermes3:8b",
+        "quantization": "awq",
+        "kv_cache_dtype": "fp8",
+        "context_length": HERMES_MIN_CTX,
+        "tool_parser": "hermes",
+        "uncensored": True,
+        "tools": True,
+    }
+
+    if total_mib < 8000:
+        return {
+            **awq,
+            "tier": "unsupported",
+            "gpu_util": None,
+            "context_length": HERMES_MIN_CTX,
+            "feasible": False,
+            "summary": "GPU VRAM too small for Hermes Agent at 64k context.",
+            "notes": [
+                "Hermes Agent needs at least 64k context for reliable tool loops.",
+                "Use a cloud provider in Hermes, or a GPU with 12GB+ VRAM.",
+            ],
+        }
+
+    if total_mib < 12000:
+        return {
+            **awq,
+            "tier": "8gb-class",
+            "gpu_util": 0.92,
+            "feasible": False,
+            "summary": "10–12GB GPUs usually cannot hold Hermes 3 8B AWQ at 64k.",
+            "notes": [
+                "You may get OOM even with fp8 KV cache and max GPU util.",
+                "Upgrade to 16GB+ VRAM, or use Hermes with a cloud API.",
+            ],
+        }
+
+    if total_mib < 16000:
+        util = 0.90 if free_mib >= 10000 and not shared_gpu else 0.82
+        return {
+            **awq,
+            "tier": "12gb-class",
+            "gpu_util": util,
+            "feasible": free_mib >= 9000,
+            "summary": "12GB VRAM: Hermes 3 8B AWQ at 64k is tight but often works.",
+            "notes": [
+                "Close browsers, games, and Ollama before starting.",
+                "First start may take 1–2 minutes while weights download.",
+            ],
+        }
+
+    if total_mib < 22000:
+        util = 0.80 if free_mib >= 14000 and not shared_gpu else 0.70
+        return {
+            **awq,
+            "tier": "16gb-class",
+            "gpu_util": util,
+            "feasible": free_mib >= 11000,
+            "summary": "16GB VRAM: good fit for Hermes 3 8B AWQ + 64k agent context.",
+            "notes": [
+                "Close other GPU apps if startup reports insufficient memory.",
+            ],
+        }
+
+    util = 0.75 if free_mib >= 18000 and not shared_gpu else 0.65
+    profile = {
+        **awq,
+        "tier": "24gb-class",
+        "gpu_util": util,
+        "feasible": free_mib >= 14000,
+        "summary": "24GB VRAM: ideal for Enodios defaults (fast uncensored Hermes agent).",
+        "notes": [
+            "Measured ~20GB VRAM at 64k + fp8 KV on RTX 4090.",
+        ],
+    }
+    if total_mib >= 40000 and free_mib >= 30000:
+        profile["alt_model"] = "NousResearch/Hermes-3-Llama-3.1-8B"
+        profile["alt_notes"] = (
+            "BF16 weights need ~16GB+ free; 64k KV may still not fit — try only on a clean GPU."
+        )
+    return profile
+
+def shell_exports(profile):
+    lines = [
+        f'export ENODIOS_MODEL="{profile["model"]}"',
+        f'export ENODIOS_SERVED_NAME="{profile["served_name"]}"',
+        f'export ENODIOS_MAX_MODEL_LEN={profile["context_length"]}',
+        f'export ENODIOS_KV_CACHE_DTYPE={profile["kv_cache_dtype"]}',
+    ]
+    if profile.get("gpu_util") is not None:
+        lines.append(f'export ENODIOS_GPU_UTIL={profile["gpu_util"]}')
+    return lines
+
+def write_env_file(profile, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("# Generated by: enodios recommend --apply\n")
+        for line in shell_exports(profile):
+            f.write(line + "\n")
+    return path
+
+args = sys.argv[1:]
+shell_only = "--shell" in args
+json_only = "--json" in args
+apply = "--apply" in args
+
+gpus = query_gpu()
+if not gpus:
+    print("ERROR: nvidia-smi not found or no NVIDIA GPU detected.", file=sys.stderr)
+    print("Hermes Agent local inference requires an NVIDIA GPU + driver.", file=sys.stderr)
+    sys.exit(1)
+
+gpu = gpus[0]
+apps = other_compute_vram()
+shared = gpu["used_mib"] > 2048 or len(apps) > 0
+profile = pick_profile(gpu["total_mib"], gpu["free_mib"], shared)
+profile["gpu"] = gpu
+profile["shared_gpu"] = shared
+profile["compute_apps"] = apps
+profile["hermes_min_context"] = HERMES_MIN_CTX
+
+if json_only:
+    print(json.dumps(profile, indent=2))
+    sys.exit(0 if profile.get("feasible", True) else 2)
+
+if shell_only:
+    if not profile.get("feasible", True):
+        print("# WARNING: current free VRAM may be too low — close GPU apps first", file=sys.stderr)
+    for line in shell_exports(profile):
+        print(line)
+    sys.exit(0 if profile.get("feasible", True) else 2)
+
+if apply:
+    path = write_env_file(profile, os.path.join(DATA, "recommended.env"))
+    print(f"Wrote {path}")
+    print("  source ~/.local/share/enodios/recommended.env")
+    print("  enodios start -b && enodios configure && hermes chat")
+
+print("== GPU ==")
+print(f"device:     {gpu['name']} (cuda:{gpu['index']})")
+print(f"vram total: {gpu['total_mib']} MiB")
+print(f"vram free:  {gpu['free_mib']} MiB")
+print(f"vram used:  {gpu['used_mib']} MiB")
+if shared:
+    print("status:     shared (other processes using GPU)")
+    for app in apps[:5]:
+        print(f"  - pid {app['pid']} {app['name']}: {app['vram_mib']} MiB")
+else:
+    print("status:     mostly idle")
+print()
+
+print("== Hermes Agent requirements ==")
+print(f"  context_length >= {HERMES_MIN_CTX} (agent tool loops)")
+print("  model with native tool calling + hermes parser")
+print("  Hermes CLI: hermes setup && enodios configure")
+print()
+
+print("== Recommendation ==")
+print(f"tier:    {profile['tier']}")
+print(f"summary: {profile['summary']}")
+print(f"feasible now: {'yes' if profile.get('feasible', True) else 'no — free more VRAM'}")
+print()
+print("model:       ", profile["model"])
+print("served name: ", profile["served_name"])
+print("context:     ", profile["context_length"])
+print("kv cache:    ", profile["kv_cache_dtype"])
+if profile.get("gpu_util") is not None:
+    print("gpu util:    ", profile["gpu_util"])
+print("tools:       ", "yes" if profile["tools"] else "no")
+print("uncensored:  ", "yes" if profile["uncensored"] else "no")
+print()
+
+for note in profile.get("notes", []):
+    print(f"  • {note}")
+if profile.get("alt_model"):
+    print()
+    print(f"optional (higher quality, tighter VRAM): {profile['alt_model']}")
+    print(f"  {profile.get('alt_notes', '')}")
+print()
+
+print("== Apply settings ==")
+print("Copy/paste before enodios start:")
+print()
+for line in shell_exports(profile):
+    print(line)
+print()
+print("Or persist:")
+print("  enodios recommend --apply")
+print("  source ~/.local/share/enodios/recommended.env")
+print()
+print("Then:")
+print("  enodios install   # if not done")
+print("  enodios start -b")
+print("  enodios configure")
+print("  hermes chat")
+
+sys.exit(0 if profile.get("feasible", True) else 2)
+PY
+}
+
+recommend_usage() {
+  cat <<EOF
+Usage: enodios recommend [--shell|--json|--apply]
+
+  Detect GPU VRAM and suggest model/settings for Hermes Agent (64k context).
+
+  --shell   Print export commands only (eval: eval "\$(enodios recommend --shell)")
+  --json    Machine-readable output
+  --apply   Write ~/.local/share/enodios/recommended.env
+EOF
 }
 
 cmd_doctor() {
@@ -156,6 +509,8 @@ cmd_doctor() {
   echo ""
   echo "== GPU =="
   require_gpu || true
+  echo "Tip: enodios recommend — GPU-specific model/settings for Hermes Agent"
+  echo ""
   echo ""
   echo "== CUDA toolkit =="
   if command -v nvcc &>/dev/null; then
@@ -262,15 +617,27 @@ PY
 }
 
 cmd_status() {
-  curl -sf "http://127.0.0.1:${PORT}/v1/models" | python3 -m json.tool 2>/dev/null || echo "down"
+  if ! vllm_ready; then
+    echo "down"
+    return 1
+  fi
+  [[ -f "$PID_FILE" ]] && echo "pid: $(cat "$PID_FILE")"
+  curl -sf "http://127.0.0.1:${PORT}/v1/models" | python3 -m json.tool 2>/dev/null
 }
 
 main() {
   case "${1:-help}" in
     install) cmd_install ;;
-    start) cmd_start ;;
+    start) shift; cmd_start "$@" ;;
     stop) cmd_stop ;;
     doctor) cmd_doctor ;;
+    recommend)
+      shift
+      case "${1:-}" in
+        -h|--help) recommend_usage ;;
+        *) cmd_recommend "$@" ;;
+      esac
+      ;;
     bench) cmd_bench ;;
     configure) cmd_configure ;;
     status) cmd_status ;;
