@@ -3,195 +3,890 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Enodios — Local Hermes Agent on Your GPU</title>
-  <meta name="description" content="One-script Linux setup for Hermes Agent + vLLM. Run uncensored agent models on your NVIDIA GPU.">
+  <title>Enodios — Sovereign Local AI with Hermes Agent</title>
+  <meta name="description" content="Run uncensored agent models on your GPU. Hermes Agent + vLLM. Your machine, your rules — no cloud refusals.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0c0f14;
-      --surface: #141a24;
+      --bg: #07090d;
+      --bg2: #0d1118;
+      --surface: #121820;
+      --surface2: #181f2a;
       --border: #243044;
-      --text: #e8eef8;
-      --muted: #8fa3bf;
-      --accent: #3d9cf5;
-      --accent2: #5eead4;
-      --warn: #fbbf24;
-      --ok: #4ade80;
+      --border-glow: rgba(212, 168, 83, 0.25);
+      --text: #f0f4fc;
+      --muted: #8b9cb8;
+      --dim: #5c6d88;
+      --gold: #d4a853;
+      --gold-dim: #a67c2e;
+      --cyan: #4ecdc4;
+      --violet: #8b7cf6;
+      --ok: #5ee08d;
+      --warn: #f5c842;
+      --danger: #f07178;
+      --radius: 14px;
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
     }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
     body {
-      font-family: 'IBM Plex Sans', system-ui, sans-serif;
+      font-family: 'Outfit', system-ui, sans-serif;
       background: var(--bg);
       color: var(--text);
-      line-height: 1.6;
+      line-height: 1.65;
       min-height: 100vh;
+      overflow-x: hidden;
     }
-    .wrap { max-width: 920px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
-    header { margin-bottom: 2.5rem; }
-    .badge {
-      display: inline-block;
-      font-size: .75rem;
-      font-weight: 600;
-      letter-spacing: .06em;
-      text-transform: uppercase;
-      color: var(--accent2);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: .25rem .75rem;
-      margin-bottom: 1rem;
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(212, 168, 83, 0.12), transparent),
+        radial-gradient(ellipse 60% 40% at 100% 20%, rgba(78, 205, 196, 0.06), transparent),
+        radial-gradient(ellipse 50% 30% at 0% 80%, rgba(139, 124, 246, 0.05), transparent);
+      pointer-events: none;
+      z-index: 0;
     }
-    h1 {
-      font-size: clamp(2rem, 5vw, 2.75rem);
+
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.4;
+    }
+
+    .wrap {
+      position: relative;
+      z-index: 1;
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 0 1.25rem 5rem;
+    }
+
+    /* Nav */
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.25rem 0;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 0;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
       font-weight: 700;
-      line-height: 1.15;
-      margin-bottom: .75rem;
+      font-size: 1.1rem;
+      text-decoration: none;
+      color: var(--text);
     }
-    .subtitle { color: var(--muted); font-size: 1.125rem; max-width: 42rem; }
-    .hero-links { margin-top: 1.25rem; display: flex; gap: .75rem; flex-wrap: wrap; }
+
+    .logo-icon {
+      width: 2rem;
+      height: 2rem;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--gold), var(--gold-dim));
+      display: grid;
+      place-items: center;
+      font-size: 1rem;
+      color: #1a1208;
+      font-weight: 800;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 0.35rem;
+      flex-wrap: wrap;
+    }
+
+    .nav-links a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+      padding: 0.4rem 0.75rem;
+      border-radius: 8px;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .nav-links a:hover {
+      color: var(--text);
+      background: var(--surface);
+    }
+
+    /* Hero */
+    .hero {
+      padding: 4rem 0 3rem;
+      text-align: center;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--gold);
+      border: 1px solid var(--border-glow);
+      background: rgba(212, 168, 83, 0.06);
+      border-radius: 999px;
+      padding: 0.35rem 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .eyebrow-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 8px var(--ok);
+      animation: pulse 2s ease infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    h1 {
+      font-size: clamp(2.5rem, 7vw, 4rem);
+      font-weight: 800;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      margin-bottom: 1rem;
+      background: linear-gradient(135deg, var(--text) 30%, var(--gold) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-greek {
+      font-weight: 500;
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      font-size: 0.55em;
+      display: block;
+      margin-top: 0.25rem;
+      letter-spacing: 0.02em;
+    }
+
+    .hero-lead {
+      font-size: clamp(1.05rem, 2.5vw, 1.25rem);
+      color: var(--muted);
+      max-width: 36rem;
+      margin: 0 auto 2rem;
+      font-weight: 400;
+    }
+
+    .hero-lead strong { color: var(--text); font-weight: 600; }
+
+    .hero-cta {
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 3rem;
+    }
+
     .btn {
       display: inline-flex;
       align-items: center;
-      gap: .4rem;
-      padding: .6rem 1rem;
-      border-radius: 8px;
+      gap: 0.45rem;
+      padding: 0.75rem 1.35rem;
+      border-radius: 10px;
       font-weight: 600;
-      font-size: .9rem;
+      font-size: 0.95rem;
       text-decoration: none;
       border: 1px solid var(--border);
+      transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
     }
-    .btn-primary { background: var(--accent); color: #041018; border-color: var(--accent); }
-    .btn-secondary { background: var(--surface); color: var(--text); }
-    section { margin: 2.5rem 0; }
-    h2 { font-size: 1.35rem; margin-bottom: 1rem; color: var(--accent2); }
-    p { color: var(--muted); margin-bottom: 1rem; }
-    .diagram {
+
+    .btn:hover { transform: translateY(-1px); }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--gold), var(--gold-dim));
+      color: #1a1208;
+      border-color: transparent;
+      box-shadow: 0 8px 32px rgba(212, 168, 83, 0.25);
+    }
+
+    .btn-primary:hover { box-shadow: 0 12px 40px rgba(212, 168, 83, 0.35); }
+
+    .btn-secondary {
       background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1.5rem;
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: .85rem;
-      line-height: 1.8;
-      overflow-x: auto;
-      white-space: pre;
       color: var(--text);
     }
-    .steps { counter-reset: step; list-style: none; }
+
+    .btn-secondary:hover { background: var(--surface2); }
+
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1rem;
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    .stat {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--cyan);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .stat-label {
+      font-size: 0.8rem;
+      color: var(--dim);
+      margin-top: 0.15rem;
+    }
+
+    /* Sections */
+    section { margin: 4rem 0; }
+
+    .section-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 0.5rem;
+    }
+
+    h2 {
+      font-size: clamp(1.5rem, 4vw, 2rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 1rem;
+      line-height: 1.2;
+    }
+
+    .section-intro {
+      color: var(--muted);
+      max-width: 42rem;
+      margin-bottom: 1.75rem;
+      font-size: 1.05rem;
+    }
+
+    /* Pillars */
+    .pillars {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+    }
+
+    .pillar {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.35rem;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+
+    .pillar:hover { border-color: var(--border-glow); }
+
+    .pillar::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--gold), transparent);
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .pillar:hover::before { opacity: 1; }
+
+    .pillar-icon {
+      font-size: 1.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .pillar h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-bottom: 0.4rem;
+    }
+
+    .pillar p {
+      font-size: 0.9rem;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    /* Architecture */
+    .arch-flow {
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      overflow-x: auto;
+      padding: 0.5rem 0 1rem;
+      scrollbar-width: thin;
+    }
+
+    .arch-node {
+      flex: 1;
+      min-width: 130px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1rem;
+      text-align: center;
+      position: relative;
+    }
+
+    .arch-node.highlight {
+      border-color: var(--border-glow);
+      background: linear-gradient(180deg, rgba(212, 168, 83, 0.08), var(--surface));
+    }
+
+    .arch-node .label {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--dim);
+      margin-bottom: 0.35rem;
+    }
+
+    .arch-node .name {
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+
+    .arch-node .detail {
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-top: 0.35rem;
+      line-height: 1.4;
+    }
+
+    .arch-arrow {
+      display: flex;
+      align-items: center;
+      color: var(--dim);
+      font-size: 1.25rem;
+      padding: 0 0.25rem;
+      flex-shrink: 0;
+    }
+
+    /* Model cards */
+    .model-grid {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .model-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 1rem;
+      align-items: start;
+    }
+
+    @media (max-width: 640px) {
+      .model-card { grid-template-columns: 1fr; }
+    }
+
+    .model-card.featured {
+      border-color: var(--border-glow);
+      box-shadow: 0 0 0 1px rgba(212, 168, 83, 0.1), var(--shadow);
+    }
+
+    .model-card h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--cyan);
+    }
+
+    .model-card .tagline {
+      font-size: 0.9rem;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+    }
+
+    .model-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+
+    .badge {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.2rem 0.55rem;
+      border-radius: 6px;
+      letter-spacing: 0.02em;
+    }
+
+    .badge-free { background: rgba(94, 224, 141, 0.12); color: var(--ok); border: 1px solid rgba(94, 224, 141, 0.25); }
+    .badge-tools { background: rgba(78, 205, 196, 0.12); color: var(--cyan); border: 1px solid rgba(78, 205, 196, 0.25); }
+    .badge-vram { background: rgba(139, 124, 246, 0.12); color: var(--violet); border: 1px solid rgba(139, 124, 246, 0.25); }
+    .badge-default { background: rgba(212, 168, 83, 0.15); color: var(--gold); border: 1px solid var(--border-glow); }
+
+    .model-meta {
+      text-align: right;
+      font-size: 0.8rem;
+      color: var(--dim);
+      white-space: nowrap;
+    }
+
+    .model-meta strong {
+      display: block;
+      font-size: 1.1rem;
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .skip-box {
+      background: rgba(240, 113, 120, 0.06);
+      border: 1px solid rgba(240, 113, 120, 0.2);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      margin-top: 1rem;
+    }
+
+    .skip-box h3 {
+      font-size: 0.95rem;
+      color: var(--danger);
+      margin-bottom: 0.5rem;
+    }
+
+    .skip-box p {
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    /* Steps */
+    .steps { list-style: none; counter-reset: step; }
+
     .steps li {
       counter-increment: step;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 1rem 1rem 1rem 3rem;
-      margin-bottom: .75rem;
+      border-radius: var(--radius);
+      padding: 1.25rem 1.25rem 1.25rem 3.5rem;
+      margin-bottom: 0.85rem;
       position: relative;
     }
+
     .steps li::before {
       content: counter(step);
       position: absolute;
-      left: 1rem;
-      top: 1rem;
-      width: 1.5rem;
-      height: 1.5rem;
+      left: 1.15rem;
+      top: 1.25rem;
+      width: 1.75rem;
+      height: 1.75rem;
       border-radius: 50%;
-      background: var(--accent);
-      color: #041018;
-      font-weight: 700;
-      font-size: .8rem;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      background: linear-gradient(135deg, var(--gold), var(--gold-dim));
+      color: #1a1208;
+      font-weight: 800;
+      font-size: 0.85rem;
+      display: grid;
+      place-items: center;
     }
+
+    .steps li strong {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-size: 1rem;
+    }
+
+    pre, code {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
     pre {
-      background: #080b10;
+      background: #05070a;
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 1rem;
+      border-radius: 10px;
+      padding: 1rem 1.1rem;
       overflow-x: auto;
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: .82rem;
-      line-height: 1.5;
-      margin: .75rem 0 0;
-      color: #c5d4ea;
+      font-size: 0.8rem;
+      line-height: 1.6;
+      color: #b8c8e0;
+      margin-top: 0.5rem;
     }
+
+    code {
+      font-size: 0.88em;
+      color: var(--cyan);
+    }
+
+    /* Tables */
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: .9rem;
-      margin-top: .5rem;
+      font-size: 0.9rem;
     }
+
     th, td {
       text-align: left;
-      padding: .6rem .75rem;
+      padding: 0.75rem 1rem;
       border-bottom: 1px solid var(--border);
     }
-    th { color: var(--muted); font-weight: 500; }
+
+    tr:last-child td { border-bottom: none; }
+
+    th {
+      color: var(--dim);
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      background: var(--surface2);
+    }
+
+    td { color: var(--muted); }
+    td strong, td:first-child { color: var(--text); }
+
+    /* Quote */
+    .manifesto {
+      background: linear-gradient(135deg, rgba(212, 168, 83, 0.06), rgba(78, 205, 196, 0.04));
+      border: 1px solid var(--border-glow);
+      border-radius: var(--radius);
+      padding: 2rem 2rem 2rem 2.5rem;
+      position: relative;
+      font-size: 1.1rem;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    .manifesto::before {
+      content: '"';
+      position: absolute;
+      left: 1rem;
+      top: 0.5rem;
+      font-size: 3rem;
+      color: var(--gold);
+      opacity: 0.4;
+      font-family: Georgia, serif;
+      line-height: 1;
+    }
+
+    .manifesto footer {
+      margin-top: 1rem;
+      font-size: 0.85rem;
+      color: var(--dim);
+      border: none;
+      padding: 0;
+    }
+
+    /* Grid cards */
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: .75rem;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.85rem;
     }
+
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 1rem;
+      border-radius: var(--radius);
+      padding: 1.1rem;
     }
-    .card strong { display: block; margin-bottom: .25rem; }
-    .card span { color: var(--muted); font-size: .875rem; }
-    footer {
-      margin-top: 3rem;
-      padding-top: 1.5rem;
+
+    .card strong { display: block; margin-bottom: 0.2rem; font-size: 0.95rem; }
+    .card span { color: var(--muted); font-size: 0.85rem; }
+
+    /* Footer */
+    footer.site-footer {
+      margin-top: 4rem;
+      padding-top: 2rem;
       border-top: 1px solid var(--border);
-      color: var(--muted);
-      font-size: .875rem;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+      color: var(--dim);
+      font-size: 0.875rem;
     }
-    code { font-family: 'IBM Plex Mono', monospace; font-size: .88em; color: var(--accent2); }
+
+    footer.site-footer a {
+      color: var(--gold);
+      text-decoration: none;
+    }
+
+    footer.site-footer a:hover { text-decoration: underline; }
+
+    .warn-line {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+      padding: 0.85rem 1rem;
+      background: var(--surface);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      margin-bottom: 0.65rem;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    .warn-line strong { color: var(--text); white-space: nowrap; }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <header>
-      <div class="badge">DataKnifeAI · Local AI</div>
-      <h1>Enodios</h1>
-      <p class="subtitle">
-        <strong style="color:var(--text)">Ἐνόδιος</strong> — Hermes of the road.
-        One-script Linux setup to run <strong style="color:var(--text)">Hermes Agent</strong> on
-        <strong style="color:var(--text)">your NVIDIA GPU</strong> with vLLM. Fast tool calling. No cloud inference keys.
+    <nav>
+      <a class="logo" href="#">
+        <span class="logo-icon">Ε</span>
+        Enodios
+      </a>
+      <div class="nav-links">
+        <a href="#philosophy">Philosophy</a>
+        <a href="#models">Models</a>
+        <a href="#quickstart">Quick start</a>
+        <a href="#commands">Commands</a>
+        <a href="https://github.com/DataKnifeAI/enodios">GitHub</a>
+      </div>
+    </nav>
+
+    <header class="hero">
+      <div class="eyebrow">
+        <span class="eyebrow-dot"></span>
+        Sovereign local AI · DataKnifeAI
+      </div>
+      <h1>
+        Your GPU.<br>Your agent.<br>Your rules.
+        <span class="hero-greek">Ἐνόδιος — Hermes of the road</span>
+      </h1>
+      <p class="hero-lead">
+        <strong>Enodios</strong> wires <strong>Hermes Agent</strong> to <strong>vLLM</strong> on your machine —
+        uncensored models, full tool access, zero cloud inference. No refusals from a provider you don't control.
       </p>
-      <div class="hero-links">
-        <a class="btn btn-primary" href="https://github.com/DataKnifeAI/enodios">GitHub</a>
-        <a class="btn btn-secondary" href="#quickstart">Quick start</a>
-        <a class="btn btn-secondary" href="#requirements">Requirements</a>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#quickstart">Get started</a>
+        <a class="btn btn-secondary" href="https://github.com/DataKnifeAI/enodios">View on GitHub</a>
+        <a class="btn btn-secondary" href="#models">Freedom-first models</a>
+      </div>
+      <div class="hero-stats">
+        <div class="stat">
+          <div class="stat-value">~2s</div>
+          <div class="stat-label">tool-call latency (vLLM)</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">64k</div>
+          <div class="stat-label">context for agent loops</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">$0</div>
+          <div class="stat-label">inference API fees</div>
+        </div>
       </div>
     </header>
 
+    <section id="philosophy">
+      <div class="section-label">Why Enodios</div>
+      <h2>Complete control on your own metal</h2>
+      <p class="section-intro">
+        Cloud models come with alignment layers, usage policies, and refusals baked in.
+        Enodios is the opposite: a local inference stack where <em>you</em> decide what runs,
+        what tools the agent gets, and which requests cross the boundary of your machine.
+      </p>
+
+      <div class="manifesto">
+        Hermes Agent is a harness — shell, files, browser, memory. Enodios feeds it models
+        with minimal safety guardrails so nothing stands between you and your workflow.
+        What happens on your system is your responsibility. That's the point.
+        <footer>— the Enodios philosophy</footer>
+      </div>
+
+      <div class="pillars" style="margin-top: 1.75rem">
+        <div class="pillar">
+          <div class="pillar-icon">🏠</div>
+          <h3>Runs locally</h3>
+          <p>Weights, KV cache, and inference stay on your GPU. No data leaves your box unless Hermes tools explicitly do it.</p>
+        </div>
+        <div class="pillar">
+          <div class="pillar-icon">🔓</div>
+          <h3>Uncensored by default</h3>
+          <p>Default model is Nous Hermes 3 — tuned for agent work without corporate alignment blocking your prompts.</p>
+        </div>
+        <div class="pillar">
+          <div class="pillar-icon">⚡</div>
+          <h3>Built for agents</h3>
+          <p>Native tool calling via vLLM's Hermes parser. ~3× faster than Ollama for the same model class on a 4090.</p>
+        </div>
+        <div class="pillar">
+          <div class="pillar-icon">🎛️</div>
+          <h3>You set the limits</h3>
+          <p>Hermes permissions, sandboxing, and model choice are yours. Enodios doesn't phone home or enforce policy.</p>
+        </div>
+      </div>
+    </section>
+
     <section>
-      <h2>How it works</h2>
-      <div class="diagram">  You
-    │
-    ▼
-  Hermes Agent  ─── tools: terminal, files, web, memory
-    │
-    │  OpenAI API  http://127.0.0.1:8000/v1
-    ▼
-  vLLM (enodios) ─── Hermes 3 AWQ + tool-call parser
-    │
-    ▼
-  NVIDIA GPU</div>
-      <p>
-        Enodios installs vLLM natively (no Docker), starts an OpenAI-compatible server,
-        and configures Hermes Agent to use it. Default model: uncensored <code>hermes3:8b</code> with reliable tool calls.
+      <div class="section-label">Architecture</div>
+      <h2>Hermes harness + vLLM engine</h2>
+      <p class="section-intro">
+        One OpenAI-compatible endpoint on localhost. Hermes handles orchestration; vLLM handles tokens.
+      </p>
+      <div class="arch-flow">
+        <div class="arch-node">
+          <div class="label">Operator</div>
+          <div class="name">You</div>
+          <div class="detail">Prompts, goals, boundaries</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node highlight">
+          <div class="label">Harness</div>
+          <div class="name">Hermes Agent</div>
+          <div class="detail">Tools · memory · planning</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node">
+          <div class="label">API</div>
+          <div class="name">:8000/v1</div>
+          <div class="detail">OpenAI-compatible</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node highlight">
+          <div class="label">Inference</div>
+          <div class="name">vLLM</div>
+          <div class="detail">AWQ · fp8 KV · hermes parser</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node">
+          <div class="label">Hardware</div>
+          <div class="name">NVIDIA GPU</div>
+          <div class="detail">Your VRAM, your rules</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="models">
+      <div class="section-label">Model guide</div>
+      <h2>Freedom-first models for Hermes Agent</h2>
+      <p class="section-intro">
+        Not every open model is suitable. Hermes needs <strong>native tool calling</strong> and enough context for long agent loops.
+        These models prioritize <strong>minimal alignment</strong> — abliterated or Nous-tuned — over corporate safety layers.
+      </p>
+
+      <div class="model-grid">
+        <div class="model-card featured">
+          <div>
+            <h3>solidrust/Hermes-3-Llama-3.1-8B-AWQ</h3>
+            <p class="tagline">The Enodios default. Uncensored, fast tool calls, fits 24GB at 64k context.</p>
+            <div class="model-badges">
+              <span class="badge badge-default">default</span>
+              <span class="badge badge-free">uncensored</span>
+              <span class="badge badge-tools">tools</span>
+              <span class="badge badge-vram">~20GB @ 64k</span>
+            </div>
+          </div>
+          <div class="model-meta">
+            <strong>~2.1s</strong>
+            tool latency
+          </div>
+        </div>
+
+        <div class="model-card">
+          <div>
+            <h3>NousResearch/Hermes-3-Llama-3.1-8B</h3>
+            <p class="tagline">BF16 weights — higher quality, heavier VRAM. Best on a clean 24GB+ GPU.</p>
+            <div class="model-badges">
+              <span class="badge badge-free">uncensored</span>
+              <span class="badge badge-tools">tools</span>
+              <span class="badge badge-vram">16GB+ weights</span>
+            </div>
+          </div>
+          <div class="model-meta">
+            <strong>quality</strong>
+            tier
+          </div>
+        </div>
+
+        <div class="model-card">
+          <div>
+            <h3>vatistasdim/Cipher-Abliterated</h3>
+            <p class="tagline">Abliterated 3.2B — safety layers stripped. Fastest tool calls, smallest footprint.</p>
+            <div class="model-badges">
+              <span class="badge badge-free">abliterated</span>
+              <span class="badge badge-tools">tools</span>
+              <span class="badge badge-vram">~4GB</span>
+            </div>
+          </div>
+          <div class="model-meta">
+            <strong>~1.2s</strong>
+            warm latency
+          </div>
+        </div>
+
+        <div class="model-card">
+          <div>
+            <h3>huihui_ai/qwen3.6-abliterated</h3>
+            <p class="tagline">Larger abliterated Qwen — strong reasoning, slower. Tool output can be inconsistent.</p>
+            <div class="model-badges">
+              <span class="badge badge-free">abliterated</span>
+              <span class="badge badge-tools">tools</span>
+              <span class="badge badge-vram">24GB+</span>
+            </div>
+          </div>
+          <div class="model-meta">
+            <strong>~14s</strong>
+            tool latency
+          </div>
+        </div>
+      </div>
+
+      <div class="skip-box">
+        <h3>Skip for sovereignty goals</h3>
+        <p>
+          Aligned cloud-tuned models — <code>nemotron-3-nano</code>, <code>qwen3.6</code> (stock), <code>gemma</code> —
+          have strong agent skills but corporate safety refusals. Fine for compliance workloads; wrong fit when you want
+          the model to follow <em>your</em> instructions without a policy layer in the middle.
+        </p>
+      </div>
+
+      <p style="margin-top: 1.25rem; font-size: 0.9rem; color: var(--dim)">
+        Run <code>enodios recommend</code> to detect your GPU and get tuned <code>ENODIOS_*</code> exports.
+        Swap models via <code>ENODIOS_MODEL</code> — any vLLM-compatible weights with Hermes tool support.
       </p>
     </section>
 
     <section id="quickstart">
+      <div class="section-label">Setup</div>
       <h2>Quick start</h2>
       <ol class="steps">
         <li>
-          <strong>Install Hermes Agent</strong> (if needed)
+          <strong>Install Hermes Agent</strong>
           <pre>curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
 hermes setup</pre>
         </li>
@@ -201,15 +896,19 @@ hermes setup</pre>
 enodios install</pre>
         </li>
         <li>
-          <strong>Check GPU stack</strong>
-          <pre>enodios doctor</pre>
+          <strong>Detect GPU → get recommended settings</strong>
+          <pre>enodios recommend
+enodios recommend --apply
+source ~/.local/share/enodios/recommended.env</pre>
         </li>
         <li>
-          <strong>Start inference</strong> (keep terminal open)
-          <pre>enodios start</pre>
+          <strong>Start inference (background)</strong>
+          <pre>enodios start -b
+enodios status
+enodios bench</pre>
         </li>
         <li>
-          <strong>Wire Hermes + chat</strong>
+          <strong>Wire Hermes + run</strong>
           <pre>enodios configure
 hermes chat</pre>
         </li>
@@ -217,56 +916,71 @@ hermes chat</pre>
     </section>
 
     <section id="requirements">
+      <div class="section-label">Hardware</div>
       <h2>Requirements</h2>
       <div class="grid">
-        <div class="card"><strong>GPU</strong><span>NVIDIA, 8GB+ VRAM (24GB recommended)</span></div>
+        <div class="card"><strong>GPU</strong><span>NVIDIA 12GB+ (24GB for 64k default)</span></div>
         <div class="card"><strong>OS</strong><span>Linux x86_64</span></div>
         <div class="card"><strong>Driver</strong><span><code>nvidia-smi</code> working</span></div>
-        <div class="card"><strong>Disk</strong><span>~15GB free (venv + model)</span></div>
-        <div class="card"><strong>RAM</strong><span>16GB min, 32GB recommended</span></div>
+        <div class="card"><strong>Disk</strong><span>~15GB free</span></div>
+        <div class="card"><strong>RAM</strong><span>16GB min, 32GB rec.</span></div>
         <div class="card"><strong>Hermes Agent</strong><span>Installed separately</span></div>
       </div>
-      <p style="margin-top:1rem">
-        Python 3.12 and uv are installed automatically. CUDA toolkit (<code>nvcc</code>) is optional.
-      </p>
-      <table>
-        <thead><tr><th>Default</th><th>Value</th></tr></thead>
-        <tbody>
-          <tr><td>Model</td><td><code>solidrust/Hermes-3-Llama-3.1-8B-AWQ</code></td></tr>
-          <tr><td>API name</td><td><code>hermes3:8b</code></td></tr>
-          <tr><td>Port</td><td><code>8000</code></td></tr>
-          <tr><td>Context</td><td><code>65536</code> tokens (Hermes minimum)</td></tr>
-          <tr><td>VRAM (weights)</td><td>~6GB AWQ</td></tr>
-        </tbody>
-      </table>
+      <div class="table-wrap" style="margin-top: 1.25rem">
+        <table>
+          <thead><tr><th>Default</th><th>Value</th></tr></thead>
+          <tbody>
+            <tr><td>Model</td><td><code>solidrust/Hermes-3-Llama-3.1-8B-AWQ</code></td></tr>
+            <tr><td>API name</td><td><code>hermes3:8b</code></td></tr>
+            <tr><td>Port</td><td><code>8000</code></td></tr>
+            <tr><td>Context</td><td><code>65536</code> (Hermes agent minimum)</td></tr>
+            <tr><td>KV cache</td><td><code>fp8</code></td></tr>
+            <tr><td>Tool parser</td><td><code>hermes</code></td></tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
-    <section>
+    <section id="commands">
+      <div class="section-label">CLI</div>
       <h2>Commands</h2>
-      <table>
-        <thead><tr><th>Command</th><th>Description</th></tr></thead>
-        <tbody>
-          <tr><td><code>enodios install</code></td><td>uv + vLLM venv + CLI link</td></tr>
-          <tr><td><code>enodios start</code></td><td>Run vLLM server (foreground)</td></tr>
-          <tr><td><code>enodios stop</code></td><td>Stop vLLM</td></tr>
-          <tr><td><code>enodios doctor</code></td><td>GPU / CUDA / health checks</td></tr>
-          <tr><td><code>enodios bench</code></td><td>Tool-call smoke test</td></tr>
-          <tr><td><code>enodios configure</code></td><td>Wire <code>~/.hermes/config.yaml</code></td></tr>
-          <tr><td><code>enodios status</code></td><td>Check <code>/v1/models</code></td></tr>
-        </tbody>
-      </table>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Command</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>enodios install</code></td><td>uv + vLLM venv + CLI link</td></tr>
+            <tr><td><code>enodios recommend</code></td><td>GPU detect → model/settings for Hermes</td></tr>
+            <tr><td><code>enodios recommend --apply</code></td><td>Write <code>recommended.env</code></td></tr>
+            <tr><td><code>enodios start</code></td><td>Foreground vLLM server</td></tr>
+            <tr><td><code>enodios start -b</code></td><td>Background with log + PID file</td></tr>
+            <tr><td><code>enodios stop</code></td><td>Stop vLLM</td></tr>
+            <tr><td><code>enodios doctor</code></td><td>GPU / CUDA / health checks</td></tr>
+            <tr><td><code>enodios bench</code></td><td>Tool-call smoke test</td></tr>
+            <tr><td><code>enodios configure</code></td><td>Wire <code>~/.hermes/config.yaml</code></td></tr>
+            <tr><td><code>enodios status</code></td><td>Check <code>/v1/models</code></td></tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
-    <section>
+    <section id="troubleshooting">
+      <div class="section-label">Ops</div>
       <h2>Troubleshooting</h2>
-      <p><strong style="color:var(--warn)">VRAM full?</strong> Close GPU apps or <code>export ENODIOS_GPU_UTIL=0.55</code> before <code>enodios start</code>.</p>
-      <p><strong style="color:var(--warn)">Port 8000 busy?</strong> <code>export ENODIOS_PORT=8001</code> and re-run <code>configure</code>.</p>
-      <p><strong style="color:var(--ok)">No nvcc?</strong> Fine — enodios uses PyTorch sampler fallback. Install <code>cuda</code> toolkit only for optional speedup.</p>
+      <div class="warn-line"><strong>VRAM full</strong> Close GPU apps or <code>export ENODIOS_GPU_UTIL=0.65</code> — run <code>enodios recommend</code> first.</div>
+      <div class="warn-line"><strong>Port busy</strong> <code>export ENODIOS_PORT=8001</code> then <code>enodios configure</code>.</div>
+      <div class="warn-line"><strong>No nvcc</strong> Fine — PyTorch sampler fallback works. CUDA toolkit is optional speedup.</div>
+      <div class="warn-line"><strong>Docker CUDA errors</strong> Use native Enodios (host vLLM). Avoids <code>CUDA_ERROR_UNKNOWN</code> in containers.</div>
     </section>
 
-    <footer>
-      <p>MIT License · <a href="https://github.com/DataKnifeAI/enodios" style="color:var(--accent)">github.com/DataKnifeAI/enodios</a></p>
-      <p style="margin-top:.5rem">Enodios (Ἐνόδιος): an epithet of Hermes — god of roads and crossroads.</p>
+    <footer class="site-footer">
+      <div>
+        <p>MIT License · <a href="https://github.com/DataKnifeAI/enodios">github.com/DataKnifeAI/enodios</a></p>
+        <p style="margin-top:0.35rem">Enodios (Ἐνόδιος): Hermes of roads and crossroads — the path between agent and GPU.</p>
+      </div>
+      <div style="text-align:right">
+        <p>Local inference. No cloud keys.</p>
+        <p style="margin-top:0.35rem">Your machine. Your rules.</p>
+      </div>
     </footer>
   </div>
 </body>
