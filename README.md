@@ -34,8 +34,8 @@ Benchmarked on RTX 4090: **~2s tool-call latency** (vLLM) vs **~7s** (Ollama) fo
 
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
-| **GPU** | NVIDIA, 8GB+ VRAM | RTX 3090/4080/4090 (24GB) |
-| **Free VRAM** | ~12GB (AWQ 8B + 64k KV) | ~18GB+ with desktop/apps open |
+| **GPU** | NVIDIA, 12GB+ VRAM | RTX 3090/4080/4090 (24GB) |
+| **Free VRAM** | ~14GB (AWQ 8B + 64k KV) | ~18GB+ with desktop/apps open |
 | **RAM** | 16GB | 32GB+ |
 | **Disk** | 15GB free | 30GB+ (model cache + vLLM venv) |
 
@@ -81,9 +81,10 @@ enodios install
 
 First `install` downloads ~2GB of Python wheels. Subsequent runs are fast.
 
-### 3. Verify GPU stack
+### 3. Verify GPU + get tuned settings
 
 ```bash
+enodios recommend    # detect VRAM → suggested ENODIOS_* exports
 enodios doctor
 ```
 
@@ -93,20 +94,29 @@ Expect:
 - `torch ... cuda True`
 - `OK: .../enodios/.venv/bin/vllm`
 
-### 4. Start inference (terminal 1)
+Optional: persist recommendations:
 
 ```bash
-enodios start
+enodios recommend --apply
+source ~/.local/share/enodios/recommended.env
 ```
 
-Wait until the server is ready (model loads in 30–90s first time). Test:
+### 4. Start inference
+
+```bash
+enodios start -b     # background (logs: ~/.local/share/enodios/vllm.log)
+```
+
+vLLM binds **127.0.0.1** by default (loopback only). Wait until ready (30–90s first time), then:
 
 ```bash
 enodios status
 enodios bench
 ```
 
-### 5. Wire Hermes (terminal 2)
+Foreground instead: `enodios start` (Ctrl+C to stop).
+
+### 5. Wire Hermes
 
 ```bash
 enodios configure
@@ -141,12 +151,40 @@ enodios stop
 | Command | Description |
 |---------|-------------|
 | `enodios install` | Create venv, install vLLM, link CLI |
-| `enodios start` | Run vLLM foreground (Hermes 3 AWQ + tools) |
+| `enodios recommend` | Detect GPU VRAM → model/settings for Hermes |
+| `enodios recommend --apply` | Write `~/.local/share/enodios/recommended.env` |
+| `enodios start` | Run vLLM foreground on loopback |
+| `enodios start -b` | Background; log + PID under `~/.local/share/enodios/` |
+| `enodios start --lan` | Bind `0.0.0.0` for LAN access (opt-in; no API auth) |
 | `enodios stop` | Stop vLLM for this stack |
+| `enodios urls` | Print local + LAN API URLs |
 | `enodios doctor` | GPU, CUDA, venv, endpoint health |
 | `enodios bench` | Tool-call latency smoke test |
-| `enodios configure` | Point Hermes at local vLLM |
-| `enodios status` | Query `/v1/models` |
+| `enodios configure` | Point Hermes at `http://127.0.0.1:8000/v1` |
+| `enodios configure --url URL` | Point Hermes at a remote vLLM endpoint |
+| `enodios status` | Query `/v1/models` + URLs |
+
+---
+
+## Distributed Hermes (Hermes controlling Hermes)
+
+Run vLLM on a GPU host; run the orchestrating Hermes agent on another machine on the same LAN.
+
+**GPU host** (inference server):
+
+```bash
+enodios start -b --lan
+enodios urls    # copy the LAN URL
+```
+
+**Controller** (Hermes agent with tools):
+
+```bash
+enodios configure --url http://<gpu-host>:8000/v1
+hermes chat
+```
+
+vLLM has **no API authentication**. Use `--lan` only on a trusted local network.
 
 ---
 
@@ -156,10 +194,13 @@ enodios stop
 |---------|-------|
 | Model weights | `solidrust/Hermes-3-Llama-3.1-8B-AWQ` |
 | API model name | `hermes3:8b` |
+| Bind address | `127.0.0.1` (loopback; use `start --lan` for LAN) |
 | Port | `8000` |
 | Context length | `65536` (Hermes agent minimum) |
+| KV cache | `fp8` |
 | GPU memory cap | `75%` of VRAM |
 | Venv | `~/.local/share/enodios/.venv` |
+| Background log | `~/.local/share/enodios/vllm.log` |
 
 ### Environment overrides
 
@@ -168,7 +209,9 @@ export ENODIOS_PORT=8000
 export ENODIOS_MODEL=solidrust/Hermes-3-Llama-3.1-8B-AWQ
 export ENODIOS_GPU_UTIL=0.85        # if GPU is idle
 export ENODIOS_MAX_MODEL_LEN=65536  # default; lower only if VRAM OOM
+export ENODIOS_KV_CACHE_DTYPE=fp8   # set auto if quality issues
 export ENODIOS_VENV=$HOME/.local/share/enodios/.venv
+export ENODIOS_LOG=$HOME/.local/share/enodios/vllm.log
 ```
 
 ---
@@ -177,9 +220,10 @@ export ENODIOS_VENV=$HOME/.local/share/enodios/.venv
 
 | Model | VRAM | Tools | Uncensored | Notes |
 |-------|------|-------|------------|-------|
-| **Hermes 3 8B AWQ** (default) | ~6GB | ✅ | ✅ | Best balance; enodios default |
-| `NousResearch/Hermes-3-Llama-3.1-8B` (BF16) | ~16GB+ | ✅ | ✅ | Higher quality; needs free VRAM |
-| Ollama `hermes3:8b` | ~5GB | ✅ | ✅ | Fallback; slower than vLLM |
+| **Hermes 3 8B AWQ** (default) | ~20GB @ 64k | ✅ | ✅ | Best balance; enodios default |
+| `NousResearch/Hermes-3-Llama-3.1-8B` (BF16) | ~16GB+ weights | ✅ | ✅ | Higher quality; needs free VRAM |
+| `vatistasdim/Cipher-Abliterated` | ~4GB | ✅ | ✅ | Fastest; smaller model |
+| Ollama `hermes3:8b` | ~5GB weights | ✅ | ✅ | Fallback; slower than vLLM |
 
 Aligned models (censored) with strong tools: `nemotron-3-nano`, `qwen3.6` — use Ollama or vLLM separately if you prefer those.
 
@@ -216,10 +260,26 @@ export PATH="$CUDA_HOME/bin:$PATH"
 ### `vLLM not running on port 8000`
 
 ```bash
-enodios start    # keep terminal open
+enodios start -b
+tail -f ~/.local/share/enodios/vllm.log
 # or check conflict:
 ss -ltnp | grep 8000
 ```
+
+### Remote Hermes cannot reach vLLM
+
+GPU host must use LAN mode; controller needs the LAN URL:
+
+```bash
+# on GPU host
+enodios start -b --lan
+enodios urls
+
+# on controller
+enodios configure --url http://<gpu-host>:8000/v1
+```
+
+Ensure firewall allows TCP port `8000` on the GPU host.
 
 ### Hermes connects but no tool calls
 
@@ -237,12 +297,24 @@ Use **native** enodios (host vLLM). This path avoids Docker CUDA issues seen on 
 
 ## Architecture
 
+**Single machine** (default):
+
 ```mermaid
 flowchart LR
   U[You] --> H[Hermes Agent CLI]
-  H -->|POST /v1/chat/completions| V[vLLM :8000]
+  H -->|127.0.0.1:8000/v1| V[vLLM]
   V --> G[NVIDIA GPU]
   H --> T[Tools: terminal, files, web]
+```
+
+**Distributed** (optional `start --lan`):
+
+```mermaid
+flowchart LR
+  U[You] --> C[Controller Hermes]
+  C -->|LAN :8000/v1| V[vLLM on GPU host]
+  V --> G[NVIDIA GPU]
+  C --> T[Tools on controller]
 ```
 
 ---

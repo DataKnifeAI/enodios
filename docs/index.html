@@ -672,6 +672,7 @@
       <div class="nav-links">
         <a href="#philosophy">Philosophy</a>
         <a href="#models">Models</a>
+        <a href="#distributed">Distributed</a>
         <a href="#quickstart">Quick start</a>
         <a href="#commands">Commands</a>
         <a href="https://github.com/DataKnifeAI/enodios">GitHub</a>
@@ -756,7 +757,8 @@
       <div class="section-label">Architecture</div>
       <h2>Hermes harness + vLLM engine</h2>
       <p class="section-intro">
-        One OpenAI-compatible endpoint on localhost. Hermes handles orchestration; vLLM handles tokens.
+        One OpenAI-compatible endpoint. Hermes handles orchestration; vLLM handles tokens.
+        Binds <strong>127.0.0.1</strong> by default — use <code>start --lan</code> only when a remote Hermes agent needs access.
       </p>
       <div class="arch-flow">
         <div class="arch-node">
@@ -881,6 +883,46 @@
       </p>
     </section>
 
+    <section id="distributed">
+      <div class="section-label">Multi-machine</div>
+      <h2>Distributed Hermes</h2>
+      <p class="section-intro">
+        One machine runs vLLM on the GPU; another runs Hermes with tools — Hermes controlling Hermes over your LAN.
+      </p>
+      <div class="grid" style="margin-bottom: 1.25rem">
+        <div class="card"><strong>GPU host</strong><span><code>enodios start -b --lan</code><br><code>enodios urls</code></span></div>
+        <div class="card"><strong>Controller</strong><span><code>enodios configure --url http://&lt;gpu-host&gt;:8000/v1</code><br><code>hermes chat</code></span></div>
+      </div>
+      <div class="arch-flow">
+        <div class="arch-node">
+          <div class="label">You</div>
+          <div class="name">Operator</div>
+          <div class="detail">Goals on controller</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node highlight">
+          <div class="label">Controller</div>
+          <div class="name">Hermes Agent</div>
+          <div class="detail">Tools · shell · files</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node">
+          <div class="label">LAN</div>
+          <div class="name">:8000/v1</div>
+          <div class="detail">start --lan</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node highlight">
+          <div class="label">GPU host</div>
+          <div class="name">vLLM</div>
+          <div class="detail">Hermes 3 inference</div>
+        </div>
+      </div>
+      <p style="margin-top: 1rem; font-size: 0.9rem; color: var(--warn)">
+        <strong>No API auth.</strong> <code>--lan</code> exposes an unauthenticated OpenAI-compatible API — trusted local network only.
+      </p>
+    </section>
+
     <section id="quickstart">
       <div class="section-label">Setup</div>
       <h2>Quick start</h2>
@@ -932,6 +974,7 @@ hermes chat</pre>
           <tbody>
             <tr><td>Model</td><td><code>solidrust/Hermes-3-Llama-3.1-8B-AWQ</code></td></tr>
             <tr><td>API name</td><td><code>hermes3:8b</code></td></tr>
+            <tr><td>Bind</td><td><code>127.0.0.1</code> (loopback; <code>start --lan</code> → <code>0.0.0.0</code>)</td></tr>
             <tr><td>Port</td><td><code>8000</code></td></tr>
             <tr><td>Context</td><td><code>65536</code> (Hermes agent minimum)</td></tr>
             <tr><td>KV cache</td><td><code>fp8</code></td></tr>
@@ -951,13 +994,16 @@ hermes chat</pre>
             <tr><td><code>enodios install</code></td><td>uv + vLLM venv + CLI link</td></tr>
             <tr><td><code>enodios recommend</code></td><td>GPU detect → model/settings for Hermes</td></tr>
             <tr><td><code>enodios recommend --apply</code></td><td>Write <code>recommended.env</code></td></tr>
-            <tr><td><code>enodios start</code></td><td>Foreground vLLM server</td></tr>
-            <tr><td><code>enodios start -b</code></td><td>Background with log + PID file</td></tr>
+            <tr><td><code>enodios start</code></td><td>Foreground vLLM on loopback</td></tr>
+            <tr><td><code>enodios start -b</code></td><td>Background; log + PID file</td></tr>
+            <tr><td><code>enodios start --lan</code></td><td>Expose vLLM on LAN (distributed Hermes)</td></tr>
+            <tr><td><code>enodios urls</code></td><td>Print local + LAN API URLs</td></tr>
             <tr><td><code>enodios stop</code></td><td>Stop vLLM</td></tr>
             <tr><td><code>enodios doctor</code></td><td>GPU / CUDA / health checks</td></tr>
             <tr><td><code>enodios bench</code></td><td>Tool-call smoke test</td></tr>
-            <tr><td><code>enodios configure</code></td><td>Wire <code>~/.hermes/config.yaml</code></td></tr>
-            <tr><td><code>enodios status</code></td><td>Check <code>/v1/models</code></td></tr>
+            <tr><td><code>enodios configure</code></td><td>Wire Hermes to local vLLM</td></tr>
+            <tr><td><code>enodios configure --url URL</code></td><td>Wire Hermes to remote vLLM</td></tr>
+            <tr><td><code>enodios status</code></td><td>URLs + <code>/v1/models</code></td></tr>
           </tbody>
         </table>
       </div>
@@ -968,6 +1014,8 @@ hermes chat</pre>
       <h2>Troubleshooting</h2>
       <div class="warn-line"><strong>VRAM full</strong> Close GPU apps or <code>export ENODIOS_GPU_UTIL=0.65</code> — run <code>enodios recommend</code> first.</div>
       <div class="warn-line"><strong>Port busy</strong> <code>export ENODIOS_PORT=8001</code> then <code>enodios configure</code>.</div>
+      <div class="warn-line"><strong>Remote Hermes</strong> GPU host needs <code>enodios start --lan</code>; controller uses <code>configure --url http://&lt;gpu-host&gt;:8000/v1</code>. Open firewall port 8000.</div>
+      <div class="warn-line"><strong>Background start failed</strong> <code>tail -f ~/.local/share/enodios/vllm.log</code></div>
       <div class="warn-line"><strong>No nvcc</strong> Fine — PyTorch sampler fallback works. CUDA toolkit is optional speedup.</div>
       <div class="warn-line"><strong>Docker CUDA errors</strong> Use native Enodios (host vLLM). Avoids <code>CUDA_ERROR_UNKNOWN</code> in containers.</div>
     </section>
