@@ -8,8 +8,9 @@ VENV="${ENODIOS_VENV:-$DATA/.venv}"
 PORT="${ENODIOS_PORT:-8000}"
 MODEL="${ENODIOS_MODEL:-solidrust/Hermes-3-Llama-3.1-8B-AWQ}"
 SERVED_NAME="${ENODIOS_SERVED_NAME:-hermes3:8b}"
-MAX_LEN="${ENODIOS_MAX_MODEL_LEN:-16384}"
-GPU_UTIL="${ENODIOS_GPU_UTIL:-0.65}"
+MAX_LEN="${ENODIOS_MAX_MODEL_LEN:-65536}"
+GPU_UTIL="${ENODIOS_GPU_UTIL:-0.75}"
+KV_CACHE_DTYPE="${ENODIOS_KV_CACHE_DTYPE:-fp8}"
 PROVIDER_NAME="${ENODIOS_PROVIDER:-enodios}"
 HERMES_CONFIG="${HERMES_CONFIG:-$HOME/.hermes/config.yaml}"
 
@@ -119,7 +120,9 @@ cmd_start() {
   # shellcheck disable=SC1091
   source "$VENV/bin/activate"
   vllm_env
-  echo "Starting vLLM on http://127.0.0.1:${PORT}/v1 (model=${SERVED_NAME})"
+  echo "Starting vLLM on http://127.0.0.1:${PORT}/v1 (model=${SERVED_NAME}, context=${MAX_LEN})"
+  extra_args=()
+  [[ -n "$KV_CACHE_DTYPE" ]] && extra_args+=(--kv-cache-dtype "$KV_CACHE_DTYPE")
   exec vllm serve "$MODEL" \
     --host 127.0.0.1 \
     --port "$PORT" \
@@ -129,7 +132,8 @@ cmd_start() {
     --enable-auto-tool-choice \
     --tool-call-parser hermes \
     --served-model-name "$SERVED_NAME" \
-    --no-enable-flashinfer-autotune
+    --no-enable-flashinfer-autotune \
+    "${extra_args[@]}"
 }
 
 cmd_stop() {

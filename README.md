@@ -22,7 +22,7 @@ Enodios installs and wires the stack:
 
 1. **vLLM** — high-throughput local inference on NVIDIA GPUs (native, no Docker required)
 2. **Hermes Agent** — agentic CLI you already use; pointed at `http://127.0.0.1:8000/v1`
-3. **Defaults tuned for agent work** — AWQ Hermes 3 8B, `--tool-call-parser hermes`, 16k context
+3. **Defaults tuned for agent work** — AWQ Hermes 3 8B, `--tool-call-parser hermes`, **64k context** (Hermes minimum)
 
 Benchmarked on RTX 4090: **~2s tool-call latency** (vLLM) vs **~7s** (Ollama) for the same model class.
 
@@ -35,7 +35,7 @@ Benchmarked on RTX 4090: **~2s tool-call latency** (vLLM) vs **~7s** (Ollama) fo
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
 | **GPU** | NVIDIA, 8GB+ VRAM | RTX 3090/4080/4090 (24GB) |
-| **Free VRAM** | ~8GB (AWQ 8B) | ~12GB+ with desktop/apps open |
+| **Free VRAM** | ~12GB (AWQ 8B + 64k KV) | ~18GB+ with desktop/apps open |
 | **RAM** | 16GB | 32GB+ |
 | **Disk** | 15GB free | 30GB+ (model cache + vLLM venv) |
 
@@ -119,13 +119,13 @@ hermes chat
 model:
   default: hermes3:8b
   provider: custom:enodios
-  context_length: 16384
+  context_length: 65536
 custom_providers:
   - name: enodios
     base_url: http://127.0.0.1:8000/v1
     models:
       hermes3:8b:
-        context_length: 16384
+        context_length: 65536
 ```
 
 ### 6. Stop when done
@@ -157,8 +157,8 @@ enodios stop
 | Model weights | `solidrust/Hermes-3-Llama-3.1-8B-AWQ` |
 | API model name | `hermes3:8b` |
 | Port | `8000` |
-| Context length | `16384` |
-| GPU memory cap | `65%` of VRAM |
+| Context length | `65536` (Hermes agent minimum) |
+| GPU memory cap | `75%` of VRAM |
 | Venv | `~/.local/share/enodios/.venv` |
 
 ### Environment overrides
@@ -167,7 +167,7 @@ enodios stop
 export ENODIOS_PORT=8000
 export ENODIOS_MODEL=solidrust/Hermes-3-Llama-3.1-8B-AWQ
 export ENODIOS_GPU_UTIL=0.85        # if GPU is idle
-export ENODIOS_MAX_MODEL_LEN=32768  # if 24GB+ VRAM free
+export ENODIOS_MAX_MODEL_LEN=65536  # default; lower only if VRAM OOM
 export ENODIOS_VENV=$HOME/.local/share/enodios/.venv
 ```
 
@@ -189,14 +189,18 @@ Aligned models (censored) with strong tools: `nemotron-3-nano`, `qwen3.6` — us
 
 ### `Free memory ... less than desired GPU memory utilization`
 
-Other apps are using VRAM (games, browsers, Ollama). Fix:
+64k context uses **~20GB VRAM** on a 4090. Close games, Ollama, etc. before starting.
 
 ```bash
 enodios stop
-# close GPU-heavy apps, or:
-export ENODIOS_GPU_UTIL=0.55
+# close GPU-heavy apps, then:
+enodios start
+# or lower cap if needed:
+export ENODIOS_GPU_UTIL=0.65
 enodios start
 ```
+
+Enodios uses `--kv-cache-dtype fp8` by default to fit 64k on 24GB cards. Disable with `ENODIOS_KV_CACHE_DTYPE=auto` if you hit quality issues.
 
 ### `Could not find nvcc`
 
