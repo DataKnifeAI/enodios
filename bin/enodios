@@ -29,7 +29,8 @@ Commands:
   doctor      Check GPU, CUDA, venv, and endpoint health
   recommend   Detect GPU VRAM and suggest model/settings for Hermes Agent
   bench       Tool-call latency test against vLLM
-  configure   Point Hermes config at local vLLM
+  configure   Point Hermes config at vLLM (local or remote URL)
+  urls        Print vLLM API URLs (local + LAN for distributed Hermes)
   status      Show vLLM /v1/models status
   help        Show this help
 
@@ -37,6 +38,8 @@ Environment:
   ENODIOS_DATA, ENODIOS_VENV, ENODIOS_PORT, ENODIOS_MODEL
   ENODIOS_GPU_UTIL, ENODIOS_MAX_MODEL_LEN, ENODIOS_PROVIDER
   ENODIOS_LOG, ENODIOS_PID_FILE
+
+  vLLM binds 127.0.0.1 by default; use "start --lan" to expose on the LAN (no API auth)
 
 Docs: https://dataknifeai.github.io/enodios/
 Repo: https://github.com/DataKnifeAI/enodios
@@ -120,17 +123,61 @@ vllm_env() {
   fi
 }
 
+lan_ip() {
+  ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit }}' \
+    || hostname -I 2>/dev/null | awk '{print $1}' \
+    || true
+}
+
+vllm_local_base() {
+  echo "http://127.0.0.1:${PORT}/v1"
+}
+
+vllm_lan_base() {
+  local ip
+  ip="$(lan_ip)"
+  [[ -n "$ip" ]] && echo "http://${ip}:${PORT}/v1"
+}
+
 vllm_ready() {
-  curl -sf --max-time 2 "http://127.0.0.1:${PORT}/v1/models" &>/dev/null
+  curl -sf --max-time 2 "$(vllm_local_base)/models" &>/dev/null
+}
+
+vllm_lan_bound() {
+  ss -ltnH 2>/dev/null | grep -qE "0\.0\.0\.0:${PORT}[[:space:]]"
 }
 
 start_usage() {
   cat <<EOF
-Usage: enodios start [-b|--background]
+Usage: enodios start [-b|--background] [-l|--lan]
 
-  (default)   Run vLLM in foreground (Ctrl+C to stop)
+  (default)   Bind 127.0.0.1 only (local Hermes on this machine)
+  -l, --lan   Bind 0.0.0.0 — expose vLLM on the LAN for remote Hermes agents
   -b, --background   Detach; logs to \$ENODIOS_LOG (default: $LOG_FILE)
+
+  Distributed Hermes: GPU host runs "enodios start -b --lan"; controller runs
+  "enodios configure --url http://<gpu-host>:${PORT}/v1"
 EOF
+}
+
+configure_usage() {
+  cat <<EOF
+Usage: enodios configure [--url BASE_URL] [--lan]
+
+  (default)   http://127.0.0.1:${PORT}/v1 — Hermes on the same machine as vLLM
+  --url URL   Custom OpenAI base URL (remote GPU / Hermes-controlling-Hermes)
+  --lan       Use this machine's LAN IP (GPU host; remote agents use urls output)
+EOF
+}
+
+normalize_base_url() {
+  local u="${1%/}"
+  [[ "$u" == */v1 ]] || u="${u}/v1"
+  echo "$u"
+}
+
+print_lan_warning() {
+  echo "WARN: LAN mode — no API auth. Trusted local network only."
 }
 
 prepare_vllm() {
@@ -144,26 +191,36 @@ prepare_vllm() {
 
 cmd_start() {
   local background=0
+  local bind_host="127.0.0.1"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -b|--background) background=1; shift ;;
+      -l|--lan) bind_host="0.0.0.0"; shift ;;
       -h|--help) start_usage; return 0 ;;
       *) echo "Unknown option: $1"; start_usage; exit 1 ;;
     esac
   done
 
   if vllm_ready; then
-    echo "vLLM already running on http://127.0.0.1:${PORT}/v1"
+    echo "vLLM already running on $(vllm_local_base)"
     [[ -f "$PID_FILE" ]] && echo "pid: $(cat "$PID_FILE")"
+    cmd_urls 2>/dev/null || true
     return 0
   fi
 
   prepare_vllm
-  echo "Starting vLLM on http://127.0.0.1:${PORT}/v1 (model=${SERVED_NAME}, context=${MAX_LEN})"
+  echo "Starting vLLM on ${bind_host}:${PORT} (model=${SERVED_NAME}, context=${MAX_LEN})"
+  echo "Local API: $(vllm_local_base)"
+  if [[ "$bind_host" == "0.0.0.0" ]]; then
+    print_lan_warning
+    local lan
+    lan="$(vllm_lan_base)"
+    [[ -n "$lan" ]] && echo "LAN API:   ${lan}"
+  fi
 
   if [[ "$background" -eq 0 ]]; then
     exec vllm serve "$MODEL" \
-      --host 127.0.0.1 \
+      --host "$bind_host" \
       --port "$PORT" \
       --max-model-len "$MAX_LEN" \
       --gpu-memory-utilization "$GPU_UTIL" \
@@ -177,7 +234,7 @@ cmd_start() {
 
   mkdir -p "$DATA"
   nohup vllm serve "$MODEL" \
-    --host 127.0.0.1 \
+    --host "$bind_host" \
     --port "$PORT" \
     --max-model-len "$MAX_LEN" \
     --gpu-memory-utilization "$GPU_UTIL" \
@@ -194,7 +251,13 @@ cmd_start() {
 
   for _ in $(seq 1 90); do
     if vllm_ready; then
-      echo "Ready: http://127.0.0.1:${PORT}/v1"
+      echo "Ready: $(vllm_local_base)"
+      if [[ "$bind_host" == "0.0.0.0" ]]; then
+        local lan
+        lan="$(vllm_lan_base)"
+        [[ -n "$lan" ]] && echo "LAN:   ${lan}"
+        echo "Remote Hermes: enodios configure --url ${lan:-http://<this-host>:${PORT}/v1}"
+      fi
       return 0
     fi
     if ! kill -0 "$pid" 2>/dev/null; then
@@ -505,6 +568,7 @@ cmd_doctor() {
   echo "data:  $DATA"
   echo "venv:  $VENV"
   echo "port:  $PORT"
+  echo "bind:  127.0.0.1 (default loopback; start --lan → 0.0.0.0)"
   echo "model: $MODEL -> $SERVED_NAME"
   echo ""
   echo "== GPU =="
@@ -539,17 +603,39 @@ cmd_doctor() {
   fi
   echo ""
   echo "== Endpoint =="
-  if curl -sf --max-time 3 "http://127.0.0.1:${PORT}/v1/models" | python3 -m json.tool 2>/dev/null | head -15; then
-    true
+  if vllm_ready; then
+    cmd_urls
+    echo ""
+    curl -sf --max-time 3 "$(vllm_local_base)/models" | python3 -m json.tool 2>/dev/null | head -15
+    if vllm_lan_bound; then
+      echo ""
+      print_lan_warning
+    fi
   else
     echo "vLLM not running on port ${PORT} (enodios start)"
+  fi
+}
+
+cmd_urls() {
+  echo "local: $(vllm_local_base)"
+  if vllm_lan_bound; then
+    local lan
+    lan="$(vllm_lan_base)"
+    if [[ -n "$lan" ]]; then
+      echo "lan:   ${lan}"
+      echo "remote hermes: enodios configure --url ${lan}"
+    else
+      echo "lan:   bound on 0.0.0.0 (could not detect LAN IP for --url)"
+    fi
+  else
+    echo "lan:   not exposed (default loopback — use: enodios start --lan)"
   fi
 }
 
 cmd_bench() {
   python3 <<PY
 import json, subprocess, time, sys
-url = "http://127.0.0.1:${PORT}/v1/chat/completions"
+url = "$(vllm_local_base)/chat/completions"
 model = "${SERVED_NAME}"
 tool = [{"type":"function","function":{"name":"calculator","description":"add","parameters":{"type":"object","properties":{"a":{"type":"number"},"b":{"type":"number"}},"required":["a","b"]}}}]
 payload = {"model":model,"messages":[{"role":"user","content":"calculator a=2 b=2"}],"tools":tool,"tool_choice":"required","max_tokens":80,"temperature":0}
@@ -569,6 +655,28 @@ PY
 }
 
 cmd_configure() {
+  local base_url=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --url)
+        [[ $# -ge 2 ]] || { echo "ERROR: --url requires an argument"; configure_usage; exit 1; }
+        base_url="$2"
+        shift 2
+        ;;
+      --lan)
+        local ip
+        ip="$(lan_ip)"
+        [[ -n "$ip" ]] || { echo "ERROR: could not detect LAN IP"; exit 1; }
+        base_url="http://${ip}:${PORT}/v1"
+        shift
+        ;;
+      -h|--help) configure_usage; return 0 ;;
+      *) echo "Unknown option: $1"; configure_usage; exit 1 ;;
+    esac
+  done
+  [[ -n "$base_url" ]] || base_url="$(vllm_local_base)"
+  base_url="$(normalize_base_url "$base_url")"
+
   mkdir -p "$(dirname "$HERMES_CONFIG")"
   if [[ ! -f "$HERMES_CONFIG" ]]; then
     echo "ERROR: $HERMES_CONFIG not found — run hermes setup first"
@@ -581,10 +689,9 @@ import re
 path = Path("${HERMES_CONFIG}")
 text = path.read_text()
 provider = "${PROVIDER_NAME}"
-port = "${PORT}"
 model = "${SERVED_NAME}"
 ctx = ${MAX_LEN}
-base = f"http://127.0.0.1:{port}/v1"
+base = "${base_url}"
 
 # model block
 text = re.sub(r"(?m)^  default:.*", f"  default: {model}", text, count=1)
@@ -622,7 +729,9 @@ cmd_status() {
     return 1
   fi
   [[ -f "$PID_FILE" ]] && echo "pid: $(cat "$PID_FILE")"
-  curl -sf "http://127.0.0.1:${PORT}/v1/models" | python3 -m json.tool 2>/dev/null
+  cmd_urls
+  echo ""
+  curl -sf "$(vllm_local_base)/models" | python3 -m json.tool 2>/dev/null
 }
 
 main() {
@@ -639,7 +748,8 @@ main() {
       esac
       ;;
     bench) cmd_bench ;;
-    configure) cmd_configure ;;
+    configure) shift; cmd_configure "$@" ;;
+    urls) cmd_urls ;;
     status) cmd_status ;;
     help|-h|--help) usage ;;
     *) echo "Unknown command: $1"; usage; exit 1 ;;
