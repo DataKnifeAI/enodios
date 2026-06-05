@@ -2,7 +2,7 @@
 # Enodios — Hermes Agent + vLLM local stack (Ἐνόδιος: Hermes of the road).
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 DATA="${ENODIOS_DATA:-$HOME/.local/share/enodios}"
 VENV="${ENODIOS_VENV:-$DATA/.venv}"
 PORT="${ENODIOS_PORT:-8000}"
