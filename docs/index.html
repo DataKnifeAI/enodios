@@ -929,13 +929,6 @@
       <h2>Quick start</h2>
       <ol class="steps">
         <li>
-          <strong>Install Hermes Agent</strong>
-          <pre>curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
-hermes setup
-# → Full setup (not Quick Setup / Nous Portal)
-# Complete Inference Provider in step 5 after vLLM is running</pre>
-        </li>
-        <li>
           <strong>Install Enodios + vLLM</strong>
           <pre>curl -fsSL https://raw.githubusercontent.com/DataKnifeAI/enodios/main/install.sh | bash
 enodios install</pre>
@@ -953,6 +946,10 @@ enodios status
 enodios bench</pre>
         </li>
         <li>
+          <strong>Install Hermes Agent</strong>
+          <pre>curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash</pre>
+        </li>
+        <li>
           <strong>Wire Hermes (setup wizard)</strong>
           <pre>hermes setup
 # → Full setup → Inference Provider → Custom endpoint (enter URL manually)
@@ -964,9 +961,16 @@ enodios bench</pre>
 hermes config show
 hermes chat</pre>
         </li>
+        <li>
+          <strong>Free the GPU (games / heavy tasks)</strong>
+          <pre>enodios stop    # or: enodios pause — releases ~20GB VRAM
+# game, render, or other GPU work
+enodios start -b   # resume when done</pre>
+        </li>
       </ol>
       <p style="margin-top:1rem;font-size:0.9rem;color:var(--dim)">
         Prefer automatic config? <code>enodios configure</code> writes the same endpoint to <code>~/.hermes/config.yaml</code>.
+        vLLM holds most of your VRAM while running — stop it before other GPU-heavy apps.
       </p>
     </section>
 
@@ -974,9 +978,10 @@ hermes chat</pre>
       <div class="section-label">Hermes Agent</div>
       <h2>Connect Hermes via CLI wizard</h2>
       <p class="section-intro">
-        During install, run <code>hermes setup</code> → <strong>Full setup</strong> → <strong>Inference Provider</strong> →
-        <strong>Custom endpoint (enter URL manually)</strong>. Use <code>hermes setup model</code> or <code>hermes model</code>
-        to change provider later — not <code>/model</code> inside chat (that only switches existing providers).
+        Install <strong>Enodios and start vLLM first</strong>, then install Hermes and run <code>hermes setup</code> →
+        <strong>Full setup</strong> → <strong>Inference Provider</strong> → <strong>Custom endpoint (enter URL manually)</strong>.
+        Use <code>hermes setup model</code> or <code>hermes model</code> to change provider later — not <code>/model</code>
+        inside chat (that only switches existing providers).
       </p>
 
       <ol class="steps" style="margin-bottom:1.25rem">
@@ -1029,7 +1034,7 @@ hermes chat</pre>
         <div class="card"><strong>Driver</strong><span><code>nvidia-smi</code> working</span></div>
         <div class="card"><strong>Disk</strong><span>~15GB free</span></div>
         <div class="card"><strong>RAM</strong><span>16GB min, 32GB rec.</span></div>
-        <div class="card"><strong>Hermes Agent</strong><span>Installed separately</span></div>
+        <div class="card"><strong>Hermes Agent</strong><span>After Enodios — vLLM must be up for setup</span></div>
       </div>
       <div class="table-wrap" style="margin-top: 1.25rem">
         <table>
@@ -1063,7 +1068,7 @@ hermes chat</pre>
             <tr><td><code>enodios start --lan</code></td><td>Expose vLLM on LAN; prompts firewall allow</td></tr>
             <tr><td><code>enodios firewall</code></td><td>Check / allow TCP port for remote Hermes</td></tr>
             <tr><td><code>enodios urls</code></td><td>Print local + LAN API URLs</td></tr>
-            <tr><td><code>enodios stop</code></td><td>Stop vLLM</td></tr>
+            <tr><td><code>enodios stop</code> / <code>pause</code></td><td>Stop vLLM — free GPU for games and other tasks</td></tr>
             <tr><td><code>enodios doctor</code></td><td>GPU / CUDA / health checks</td></tr>
             <tr><td><code>enodios bench</code></td><td>Tool-call smoke test</td></tr>
             <tr><td><code>enodios configure</code></td><td>Wire Hermes to local vLLM</td></tr>
@@ -1077,7 +1082,8 @@ hermes chat</pre>
     <section id="troubleshooting">
       <div class="section-label">Ops</div>
       <h2>Troubleshooting</h2>
-      <div class="warn-line"><strong>VRAM full</strong> Close GPU apps or <code>export ENODIOS_GPU_UTIL=0.65</code> — run <code>enodios recommend</code> first.</div>
+      <div class="warn-line"><strong>Gaming / heavy GPU</strong> <code>enodios stop</code> before launching — default 64k uses ~20GB VRAM. Resume with <code>enodios start -b</code>.</div>
+      <div class="warn-line"><strong>VRAM full</strong> <code>enodios stop</code> first, close other GPU apps, or <code>export ENODIOS_GPU_UTIL=0.65</code> — run <code>enodios recommend</code>.</div>
       <div class="warn-line"><strong>Port busy</strong> <code>export ENODIOS_PORT=8001</code> then <code>enodios configure</code>.</div>
       <div class="warn-line"><strong>Remote Hermes</strong> GPU host: <code>enodios start -b --lan</code> (prompts firewall) + <code>enodios urls</code>; controller: <code>configure --url http://&lt;gpu-host&gt;:8000/v1</code></div>
       <div class="warn-line"><strong>Background start failed</strong> <code>tail -f ~/.local/share/enodios/vllm.log</code></div>

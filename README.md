@@ -18,10 +18,10 @@ You ──► Hermes Agent (tools, files, terminal, web)
          vLLM on your GPU (Hermes 3, tool-call parser)
 ```
 
-Enodios installs and wires the stack:
+Enodios installs and wires the stack (install Enodios first, then Hermes):
 
 1. **vLLM** — high-throughput local inference on NVIDIA GPUs (native, no Docker required)
-2. **Hermes Agent** — agentic CLI you already use; pointed at `http://127.0.0.1:8000/v1`
+2. **Hermes Agent** — install after vLLM is running; pointed at `http://127.0.0.1:8000/v1`
 3. **Defaults tuned for agent work** — AWQ Hermes 3 8B, `--tool-call-parser hermes`, **64k context** (Hermes minimum)
 
 Benchmarked on RTX 4090: **~2s tool-call latency** (vLLM) vs **~7s** (Ollama) for the same model class.
@@ -46,7 +46,7 @@ Benchmarked on RTX 4090: **~2s tool-call latency** (vLLM) vs **~7s** (Ollama) fo
 | **Linux** | x86_64. Arch, Ubuntu, Fedora, etc. |
 | **NVIDIA driver** | `nvidia-smi` must work |
 | **curl, git** | For bootstrap |
-| **Hermes Agent** | [Install separately](https://github.com/NousResearch/hermes-agent) if not already present |
+| **Hermes Agent** | [Install after Enodios](#quick-start-5-minutes) — needs vLLM running before `hermes setup` |
 | **Python 3.12** | Installed automatically via `uv` — system Python 3.14+ is not used |
 | **CUDA toolkit** | Optional (`pacman -S cuda` / `nvidia-cuda-toolkit`). Speeds up sampling; not required |
 
@@ -65,16 +65,7 @@ Benchmarked on RTX 4090: **~2s tool-call latency** (vLLM) vs **~7s** (Ollama) fo
 
 ## Quick start (5 minutes)
 
-### 1. Install Hermes Agent (if needed)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
-hermes setup
-```
-
-On first run, choose **Full setup** (not Quick Setup / Nous Portal). When you reach **Inference Provider**, pick **Custom endpoint (enter URL manually)** and use the [wizard values below](#connect-hermes-via-cli-wizard).
-
-### 2. Install Enodios + vLLM
+### 1. Install Enodios + vLLM
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/DataKnifeAI/enodios/main/install.sh | bash
@@ -93,7 +84,7 @@ Pulls the latest enodios from git, refreshes `~/.local/bin/enodios`, and upgrade
 
 `enodios start` checks for updates (git fetch every 6h by default) and prints a notice when a newer release is available.
 
-### 3. Verify GPU + get tuned settings
+### 2. Verify GPU + get tuned settings
 
 ```bash
 enodios recommend    # detect VRAM → suggested ENODIOS_* exports
@@ -113,7 +104,7 @@ enodios recommend --apply
 source ~/.local/share/enodios/recommended.env
 ```
 
-### 4. Start inference
+### 3. Start inference
 
 ```bash
 enodios start -b     # background (logs: ~/.local/share/enodios/vllm.log)
@@ -128,18 +119,26 @@ enodios bench
 
 Foreground instead: `enodios start` (Ctrl+C to stop).
 
+### 4. Install Hermes Agent
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+```
+
+Install Hermes **after** Enodios and vLLM are running — the setup wizard probes `http://127.0.0.1:8000/v1` and needs the endpoint up.
+
 ### 5. Wire Hermes
 
-**Option A — setup wizard (recommended during install):**
+**Option A — setup wizard (recommended):**
 
 ```bash
 hermes setup
-# → Full setup
+# → Full setup (not Quick Setup / Nous Portal)
 # → Inference Provider
 # → Custom endpoint (enter URL manually)
 ```
 
-Already configured Hermes? Jump to provider only:
+Use the [wizard values below](#connect-hermes-via-cli-wizard). Already configured Hermes? Jump to provider only:
 
 ```bash
 hermes setup model
@@ -173,11 +172,21 @@ hermes chat
 
 See [Connect Hermes via CLI wizard](#connect-hermes-via-cli-wizard) for remote GPU hosts, named providers, and troubleshooting.
 
-### 6. Stop when done
+### 6. Free the GPU (games, rendering, other apps)
+
+vLLM holds **~20GB VRAM** on the default 64k setup. Stop it before games or any heavy GPU work:
 
 ```bash
-enodios stop
+enodios stop      # or: enodios pause
 ```
+
+When you're done, bring inference back:
+
+```bash
+enodios start -b
+```
+
+Hermes Agent does not need reinstalling — only vLLM was stopped.
 
 ---
 
@@ -215,14 +224,15 @@ To add Enodios/vLLM for the first time, use **`hermes setup`** (Full setup) or *
 
 ### Prerequisites
 
-1. Hermes Agent installed: `hermes setup` (first time only)
-2. Enodios vLLM running and healthy:
+1. Enodios installed and vLLM running:
 
 ```bash
 enodios start -b
 enodios status    # should list hermes3:8b
 enodios bench     # tool-call smoke test
 ```
+
+2. Hermes Agent installed (`curl .../hermes-agent/.../install.sh | bash`), then run `hermes setup`
 
 ### Wizard walkthrough (same machine)
 
@@ -376,7 +386,7 @@ Both persist to `~/.hermes/config.yaml`. `enodios configure` creates a timestamp
 | `enodios start --lan` | Bind `0.0.0.0` for LAN access; prompts to open firewall |
 | `enodios firewall` | Check whether LAN clients can reach port 8000 |
 | `enodios firewall --allow` | Add UFW/firewalld rule without prompting |
-| `enodios stop` | Stop vLLM for this stack |
+| `enodios stop` / `pause` | Stop vLLM — free GPU for games and other tasks |
 | `enodios urls` | Print local + LAN API URLs |
 | `enodios doctor` | GPU, CUDA, venv, endpoint health |
 | `enodios bench` | Tool-call latency smoke test |
@@ -450,6 +460,18 @@ Aligned models (censored) with strong tools: `nemotron-3-nano`, `qwen3.6` — us
 ---
 
 ## Troubleshooting
+
+### Gaming or heavy GPU apps
+
+Enodios and games share one GPU. **Stop vLLM before launching** a game, 3D app, or other VRAM-heavy workload:
+
+```bash
+enodios stop    # frees ~20GB on the default 64k AWQ setup
+# play / render / train — GPU is yours
+enodios start -b   # when you want Hermes inference again
+```
+
+`enodios pause` is the same as `stop`. Hermes Agent keeps its config; only the inference server exits.
 
 ### `Free memory ... less than desired GPU memory utilization`
 

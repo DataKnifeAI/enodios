@@ -26,7 +26,8 @@ Commands:
   install     Install uv venv + vLLM, link this CLI to ~/.local/bin
   update      git pull enodios + upgrade vLLM + refresh CLI link
   start       Run vLLM (foreground by default; -b/--background to detach)
-  stop        Stop vLLM processes for this stack
+  stop        Stop vLLM — free GPU VRAM for games / other tasks
+  pause       Alias for stop
   doctor      Check GPU, CUDA, venv, and endpoint health
   recommend   Detect GPU VRAM and suggest model/settings for Hermes Agent
   bench       Tool-call latency test against vLLM
@@ -236,7 +237,7 @@ EOF
   echo "  enodios recommend  # GPU → model/settings for Hermes Agent"
   echo "  enodios doctor"
   echo "  enodios start -b   # background (or foreground in another terminal)"
-  echo "  enodios configure"
+  echo "  # install Hermes Agent, then enodios configure or hermes setup"
   echo "  hermes chat"
 }
 
@@ -605,7 +606,19 @@ cmd_start() {
   return 0
 }
 
+gpu_vram_summary() {
+  command -v nvidia-smi &>/dev/null || return 0
+  nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null \
+    | head -1 \
+    | awk -F', ' '{printf "GPU VRAM: %s MiB used / %s MiB total\n", $1, $2}'
+}
+
 cmd_stop() {
+  local was_running=0
+  if vllm_ready; then
+    was_running=1
+  fi
+
   if [[ -f "$PID_FILE" ]]; then
     kill "$(cat "$PID_FILE")" 2>/dev/null || true
     rm -f "$PID_FILE"
@@ -613,11 +626,19 @@ cmd_stop() {
   pkill -f "${VENV}/bin/vllm serve" 2>/dev/null || true
   pkill -f 'vllm serve.*hermes3:8b' 2>/dev/null || true
   sleep 1
+
   if vllm_ready; then
     echo "WARN: port ${PORT} still responding"
-  else
-    echo "vLLM stopped (port ${PORT} down)"
+    return 1
   fi
+
+  if [[ "$was_running" -eq 1 ]]; then
+    echo "vLLM stopped — GPU VRAM released for games and other heavy GPU tasks"
+  else
+    echo "vLLM not running (port ${PORT} down)"
+  fi
+  gpu_vram_summary || true
+  echo "Resume inference: enodios start -b"
 }
 
 cmd_recommend() {
@@ -837,7 +858,7 @@ print()
 print("== Hermes Agent requirements ==")
 print(f"  context_length >= {HERMES_MIN_CTX} (agent tool loops)")
 print("  model with native tool calling + hermes parser")
-print("  Hermes CLI: hermes setup → Full setup → Inference Provider → Custom")
+print("  Hermes CLI: install after enodios start — hermes setup → Full setup → Custom")
 print("              (or: enodios configure)")
 print()
 
@@ -877,7 +898,7 @@ print()
 print("Then:")
 print("  enodios install   # if not done")
 print("  enodios start -b")
-print("  enodios configure")
+print("  # install Hermes Agent, then enodios configure or hermes setup")
 print("  hermes chat")
 
 sys.exit(0 if profile.get("feasible", True) else 2)
@@ -932,7 +953,7 @@ cmd_doctor() {
   if command -v hermes &>/dev/null; then
     echo "OK: $(command -v hermes)"
   else
-    echo "hermes CLI not found — install: https://github.com/NousResearch/hermes-agent"
+    echo "hermes CLI not found — install after enodios start: https://github.com/NousResearch/hermes-agent"
   fi
   echo ""
   echo "== Endpoint =="
@@ -1083,7 +1104,7 @@ main() {
       ;;
     _update_venv) shift; cmd_update_venv "${1:-$ROOT}" ;;
     start) shift; cmd_start "$@" ;;
-    stop) cmd_stop ;;
+    stop|pause) cmd_stop ;;
     doctor) cmd_doctor ;;
     recommend)
       shift
