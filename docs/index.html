@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Enodios — Local Hermes Agent on Your GPU</title>
+  <meta name="description" content="One-script Linux setup for Hermes Agent + vLLM. Run uncensored agent models on your NVIDIA GPU.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0c0f14;
+      --surface: #141a24;
+      --border: #243044;
+      --text: #e8eef8;
+      --muted: #8fa3bf;
+      --accent: #3d9cf5;
+      --accent2: #5eead4;
+      --warn: #fbbf24;
+      --ok: #4ade80;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'IBM Plex Sans', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    header { margin-bottom: 2.5rem; }
+    .badge {
+      display: inline-block;
+      font-size: .75rem;
+      font-weight: 600;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: .25rem .75rem;
+      margin-bottom: 1rem;
+    }
+    h1 {
+      font-size: clamp(2rem, 5vw, 2.75rem);
+      font-weight: 700;
+      line-height: 1.15;
+      margin-bottom: .75rem;
+    }
+    .subtitle { color: var(--muted); font-size: 1.125rem; max-width: 42rem; }
+    .hero-links { margin-top: 1.25rem; display: flex; gap: .75rem; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: .4rem;
+      padding: .6rem 1rem;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: .9rem;
+      text-decoration: none;
+      border: 1px solid var(--border);
+    }
+    .btn-primary { background: var(--accent); color: #041018; border-color: var(--accent); }
+    .btn-secondary { background: var(--surface); color: var(--text); }
+    section { margin: 2.5rem 0; }
+    h2 { font-size: 1.35rem; margin-bottom: 1rem; color: var(--accent2); }
+    p { color: var(--muted); margin-bottom: 1rem; }
+    .diagram {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .85rem;
+      line-height: 1.8;
+      overflow-x: auto;
+      white-space: pre;
+      color: var(--text);
+    }
+    .steps { counter-reset: step; list-style: none; }
+    .steps li {
+      counter-increment: step;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1rem 1rem 3rem;
+      margin-bottom: .75rem;
+      position: relative;
+    }
+    .steps li::before {
+      content: counter(step);
+      position: absolute;
+      left: 1rem;
+      top: 1rem;
+      width: 1.5rem;
+      height: 1.5rem;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #041018;
+      font-weight: 700;
+      font-size: .8rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    pre {
+      background: #080b10;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      overflow-x: auto;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: .82rem;
+      line-height: 1.5;
+      margin: .75rem 0 0;
+      color: #c5d4ea;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .9rem;
+      margin-top: .5rem;
+    }
+    th, td {
+      text-align: left;
+      padding: .6rem .75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--muted); font-weight: 500; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: .75rem;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem;
+    }
+    .card strong { display: block; margin-bottom: .25rem; }
+    .card span { color: var(--muted); font-size: .875rem; }
+    footer {
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: .875rem;
+    }
+    code { font-family: 'IBM Plex Mono', monospace; font-size: .88em; color: var(--accent2); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="badge">DataKnifeAI · Local AI</div>
+      <h1>Enodios</h1>
+      <p class="subtitle">
+        <strong style="color:var(--text)">Ἐνόδιος</strong> — Hermes of the road.
+        One-script Linux setup to run <strong style="color:var(--text)">Hermes Agent</strong> on
+        <strong style="color:var(--text)">your NVIDIA GPU</strong> with vLLM. Fast tool calling. No cloud inference keys.
+      </p>
+      <div class="hero-links">
+        <a class="btn btn-primary" href="https://github.com/DataKnifeAI/enodios">GitHub</a>
+        <a class="btn btn-secondary" href="#quickstart">Quick start</a>
+        <a class="btn btn-secondary" href="#requirements">Requirements</a>
+      </div>
+    </header>
+
+    <section>
+      <h2>How it works</h2>
+      <div class="diagram">  You
+    │
+    ▼
+  Hermes Agent  ─── tools: terminal, files, web, memory
+    │
+    │  OpenAI API  http://127.0.0.1:8000/v1
+    ▼
+  vLLM (enodios) ─── Hermes 3 AWQ + tool-call parser
+    │
+    ▼
+  NVIDIA GPU</div>
+      <p>
+        Enodios installs vLLM natively (no Docker), starts an OpenAI-compatible server,
+        and configures Hermes Agent to use it. Default model: uncensored <code>hermes3:8b</code> with reliable tool calls.
+      </p>
+    </section>
+
+    <section id="quickstart">
+      <h2>Quick start</h2>
+      <ol class="steps">
+        <li>
+          <strong>Install Hermes Agent</strong> (if needed)
+          <pre>curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+hermes setup</pre>
+        </li>
+        <li>
+          <strong>Install Enodios + vLLM</strong>
+          <pre>curl -fsSL https://raw.githubusercontent.com/DataKnifeAI/enodios/main/install.sh | bash
+enodios install</pre>
+        </li>
+        <li>
+          <strong>Check GPU stack</strong>
+          <pre>enodios doctor</pre>
+        </li>
+        <li>
+          <strong>Start inference</strong> (keep terminal open)
+          <pre>enodios start</pre>
+        </li>
+        <li>
+          <strong>Wire Hermes + chat</strong>
+          <pre>enodios configure
+hermes chat</pre>
+        </li>
+      </ol>
+    </section>
+
+    <section id="requirements">
+      <h2>Requirements</h2>
+      <div class="grid">
+        <div class="card"><strong>GPU</strong><span>NVIDIA, 8GB+ VRAM (24GB recommended)</span></div>
+        <div class="card"><strong>OS</strong><span>Linux x86_64</span></div>
+        <div class="card"><strong>Driver</strong><span><code>nvidia-smi</code> working</span></div>
+        <div class="card"><strong>Disk</strong><span>~15GB free (venv + model)</span></div>
+        <div class="card"><strong>RAM</strong><span>16GB min, 32GB recommended</span></div>
+        <div class="card"><strong>Hermes Agent</strong><span>Installed separately</span></div>
+      </div>
+      <p style="margin-top:1rem">
+        Python 3.12 and uv are installed automatically. CUDA toolkit (<code>nvcc</code>) is optional.
+      </p>
+      <table>
+        <thead><tr><th>Default</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Model</td><td><code>solidrust/Hermes-3-Llama-3.1-8B-AWQ</code></td></tr>
+          <tr><td>API name</td><td><code>hermes3:8b</code></td></tr>
+          <tr><td>Port</td><td><code>8000</code></td></tr>
+          <tr><td>Context</td><td><code>16384</code> tokens</td></tr>
+          <tr><td>VRAM (weights)</td><td>~6GB AWQ</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Commands</h2>
+      <table>
+        <thead><tr><th>Command</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>enodios install</code></td><td>uv + vLLM venv + CLI link</td></tr>
+          <tr><td><code>enodios start</code></td><td>Run vLLM server (foreground)</td></tr>
+          <tr><td><code>enodios stop</code></td><td>Stop vLLM</td></tr>
+          <tr><td><code>enodios doctor</code></td><td>GPU / CUDA / health checks</td></tr>
+          <tr><td><code>enodios bench</code></td><td>Tool-call smoke test</td></tr>
+          <tr><td><code>enodios configure</code></td><td>Wire <code>~/.hermes/config.yaml</code></td></tr>
+          <tr><td><code>enodios status</code></td><td>Check <code>/v1/models</code></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Troubleshooting</h2>
+      <p><strong style="color:var(--warn)">VRAM full?</strong> Close GPU apps or <code>export ENODIOS_GPU_UTIL=0.55</code> before <code>enodios start</code>.</p>
+      <p><strong style="color:var(--warn)">Port 8000 busy?</strong> <code>export ENODIOS_PORT=8001</code> and re-run <code>configure</code>.</p>
+      <p><strong style="color:var(--ok)">No nvcc?</strong> Fine — enodios uses PyTorch sampler fallback. Install <code>cuda</code> toolkit only for optional speedup.</p>
+    </section>
+
+    <footer>
+      <p>MIT License · <a href="https://github.com/DataKnifeAI/enodios" style="color:var(--accent)">github.com/DataKnifeAI/enodios</a></p>
+      <p style="margin-top:.5rem">Enodios (Ἐνόδιος): an epithet of Hermes — god of roads and crossroads.</p>
+    </footer>
+  </div>
+</body>
+</html>

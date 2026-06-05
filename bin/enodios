@@ -33,7 +33,8 @@ Environment:
   ENODIOS_DATA, ENODIOS_VENV, ENODIOS_PORT, ENODIOS_MODEL
   ENODIOS_GPU_UTIL, ENODIOS_MAX_MODEL_LEN, ENODIOS_PROVIDER
 
-Docs: https://github.com/DataKnifeAI/enodios
+Docs: https://dataknifeai.github.io/enodios/
+Repo: https://github.com/DataKnifeAI/enodios
 EOF
 }
 
