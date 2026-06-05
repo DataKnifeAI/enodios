@@ -69,8 +69,10 @@ Benchmarked on RTX 4090: **~2s tool-call latency** (vLLM) vs **~7s** (Ollama) fo
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
-hermes setup   # walk through initial config; you can change model after
+hermes setup
 ```
+
+On first run, choose **Full setup** (not Quick Setup / Nous Portal). When you reach **Inference Provider**, pick **Custom endpoint (enter URL manually)** and use the [wizard values below](#connect-hermes-via-cli-wizard).
 
 ### 2. Install Enodios + vLLM
 
@@ -80,6 +82,16 @@ enodios install
 ```
 
 First `install` downloads ~2GB of Python wheels. Subsequent runs are fast.
+
+**Update later:**
+
+```bash
+enodios update
+```
+
+Pulls the latest enodios from git, refreshes `~/.local/bin/enodios`, and upgrades vLLM in the venv. Restart vLLM if it was running: `enodios stop && enodios start -b`.
+
+`enodios start` checks for updates (git fetch every 6h by default) and prints a notice when a newer release is available.
 
 ### 3. Verify GPU + get tuned settings
 
@@ -118,12 +130,154 @@ Foreground instead: `enodios start` (Ctrl+C to stop).
 
 ### 5. Wire Hermes
 
+**Option A — setup wizard (recommended during install):**
+
+```bash
+hermes setup
+# → Full setup
+# → Inference Provider
+# → Custom endpoint (enter URL manually)
+```
+
+Already configured Hermes? Jump to provider only:
+
+```bash
+hermes setup model
+# or: hermes model
+```
+
+Use these values when prompted:
+
+| Prompt | Value |
+|--------|-------|
+| Provider | **Custom endpoint (self-hosted / VLLM / etc.)** |
+| Base URL | `http://127.0.0.1:8000/v1` |
+| API key | Leave empty (Enodios has no auth by default) |
+| Model name | `hermes3:8b` |
+| Context length | `65536` (Hermes agent minimum) |
+| Provider name (if asked) | `enodios` |
+
+Then verify and chat:
+
+```bash
+hermes config show
+hermes chat
+```
+
+**Option B — automatic (overwrites provider block):**
+
 ```bash
 enodios configure
 hermes chat
 ```
 
-`configure` backs up `~/.hermes/config.yaml` and sets:
+See [Connect Hermes via CLI wizard](#connect-hermes-via-cli-wizard) for remote GPU hosts, named providers, and troubleshooting.
+
+### 6. Stop when done
+
+```bash
+enodios stop
+```
+
+---
+
+## Connect Hermes via CLI wizard
+
+### Setup path (first install)
+
+```bash
+hermes setup
+```
+
+1. **How would you like to set up Hermes?** → **Full setup** — configure every provider, tool & option yourself  
+   (Skip **Quick Setup (Nous Portal)** — that's cloud, not local Enodios.)
+2. Wizard runs sections in order. At **Inference Provider** → choose **Custom endpoint (enter URL manually)**.
+3. Enter the Enodios values in the table below.
+4. You can press Enter through later sections (terminal, gateway, tools) or configure them later.
+
+Shortcut to provider only (skip the full wizard):
+
+```bash
+hermes setup model
+```
+
+Same **Inference Provider** → **Custom endpoint** flow as step 2 above.
+
+### `hermes model` vs `/model`
+
+| Command | Where | Purpose |
+|---------|-------|---------|
+| **`hermes setup`** → Full setup → Inference Provider | Install / reconfigure | Full wizard; Enodios at first provider step |
+| **`hermes setup model`** / **`hermes model`** | Your shell (outside chat) | Provider picker only — same Custom endpoint flow |
+| **`/model`** | Inside `hermes chat` | Switch between **already configured** providers only |
+
+To add Enodios/vLLM for the first time, use **`hermes setup`** (Full setup) or **`hermes setup model`**, not `/model`.
+
+### Prerequisites
+
+1. Hermes Agent installed: `hermes setup` (first time only)
+2. Enodios vLLM running and healthy:
+
+```bash
+enodios start -b
+enodios status    # should list hermes3:8b
+enodios bench     # tool-call smoke test
+```
+
+### Wizard walkthrough (same machine)
+
+Exit any active `hermes chat` session first (`Ctrl+C` or `/quit`).
+
+**From full setup:**
+
+```bash
+hermes setup
+# Full setup → Inference Provider → Custom endpoint (enter URL manually)
+```
+
+**Or provider only:**
+
+```bash
+hermes setup model
+# Custom endpoint (enter URL manually)
+```
+
+Step through the prompts:
+
+```
+1. Inference Provider (full setup) or provider list (hermes model)
+   → Custom endpoint (enter URL manually)
+
+2. API base URL
+   → http://127.0.0.1:8000/v1
+     (must end with /v1 — same as enodios urls → local)
+
+3. API key
+   → Press Enter / skip
+     (loopback Enodios has no API key unless you added --api-key to vLLM)
+
+4. Model name
+   → hermes3:8b
+     (Enodios served name — NOT the HuggingFace path)
+
+5. Context length
+   → 65536
+     (required for Hermes agent tool loops; matches enodios default)
+
+6. Named provider (if prompted)
+   → enodios
+     (enables provider: custom:enodios in config)
+```
+
+Hermes may probe `http://127.0.0.1:8000/v1/models` to validate the endpoint. If vLLM is still loading, wait and re-run `hermes setup model` or `hermes model`.
+
+### Verify configuration
+
+```bash
+hermes config show
+```
+
+Expect something like:
 
 ```yaml
 model:
@@ -138,11 +292,74 @@ custom_providers:
         context_length: 65536
 ```
 
-### 6. Stop when done
+Start chatting:
 
 ```bash
-enodios stop
+hermes chat
+# or
+hermes
 ```
+
+Inside an existing session, switch back to Enodios with:
+
+```
+/model custom:enodios:hermes3:8b
+# or, if only one model on the endpoint:
+/model custom:enodios
+```
+
+### Remote GPU host (distributed Hermes)
+
+On the **GPU machine**:
+
+```bash
+enodios start -b --lan
+enodios urls    # note the lan: URL, e.g. http://192.168.1.10:8000/v1
+```
+
+On the **controller** (where you run Hermes):
+
+```bash
+hermes setup model
+```
+
+| Prompt | Value |
+|--------|-------|
+| Provider | Custom endpoint (enter URL manually) |
+| Base URL | `http://<gpu-host-ip>:8000/v1` from `enodios urls` |
+| API key | Empty |
+| Model | `hermes3:8b` |
+| Context length | `65536` |
+| Provider name | `enodios` |
+
+Or skip the wizard on the controller:
+
+```bash
+enodios configure --url http://<gpu-host-ip>:8000/v1
+```
+
+### Wizard vs `enodios configure`
+
+| Method | Best for |
+|--------|----------|
+| **`hermes setup`** (Full setup) | First install — Inference Provider → Custom |
+| **`hermes setup model`** / **`hermes model`** | Reconfigure provider only |
+| **`enodios configure`** | Quick overwrite of Hermes config for the Enodios endpoint only |
+| **`enodios configure --url`** | Controller machine pointing at a remote GPU host |
+
+Both persist to `~/.hermes/config.yaml`. `enodios configure` creates a timestamped backup before editing.
+
+### Troubleshooting the wizard
+
+| Problem | Fix |
+|---------|-----|
+| Endpoint probe fails | `enodios status` — wait for model load; check `tail -f ~/.local/share/enodios/vllm.log` |
+| Wrong model name | Use `hermes3:8b` (run `enodios status` to confirm) |
+| Context too small | Set **65536** explicitly in the wizard |
+| No tool calls in chat | `enodios bench` must pass; Enodios sets `--tool-call-parser hermes` automatically |
+| `/model` missing Enodios | Exit chat; run `hermes setup model` first — `/model` only lists configured providers |
+| Picked Quick Setup by mistake | Re-run `hermes setup` → **Full setup** → Inference Provider → Custom |
+| Remote host unreachable | GPU host: `enodios start --lan` + `enodios firewall --allow` (or accept prompt on `start --lan`) |
 
 ---
 
@@ -151,11 +368,14 @@ enodios stop
 | Command | Description |
 |---------|-------------|
 | `enodios install` | Create venv, install vLLM, link CLI |
+| `enodios update` | `git pull` + upgrade vLLM + refresh CLI link |
 | `enodios recommend` | Detect GPU VRAM → model/settings for Hermes |
 | `enodios recommend --apply` | Write `~/.local/share/enodios/recommended.env` |
 | `enodios start` | Run vLLM foreground on loopback |
 | `enodios start -b` | Background; log + PID under `~/.local/share/enodios/` |
-| `enodios start --lan` | Bind `0.0.0.0` for LAN access (opt-in; no API auth) |
+| `enodios start --lan` | Bind `0.0.0.0` for LAN access; prompts to open firewall |
+| `enodios firewall` | Check whether LAN clients can reach port 8000 |
+| `enodios firewall --allow` | Add UFW/firewalld rule without prompting |
 | `enodios stop` | Stop vLLM for this stack |
 | `enodios urls` | Print local + LAN API URLs |
 | `enodios doctor` | GPU, CUDA, venv, endpoint health |
@@ -279,7 +499,7 @@ enodios urls
 enodios configure --url http://<gpu-host>:8000/v1
 ```
 
-Ensure firewall allows TCP port `8000` on the GPU host.
+On the GPU host, `enodios start --lan` detects UFW/firewalld and asks to allow TCP `8000` for your LAN subnet. Or run `enodios firewall --allow` manually.
 
 ### Hermes connects but no tool calls
 

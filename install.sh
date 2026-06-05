@@ -12,4 +12,4 @@ else
   git clone "$REPO" "$DIR"
 fi
 
-exec "$DIR/bin/enodios" install
+exec "$DIR/bin/enodios" update

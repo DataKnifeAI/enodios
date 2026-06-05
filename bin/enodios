@@ -24,6 +24,7 @@ Usage: enodios <command>
 
 Commands:
   install     Install uv venv + vLLM, link this CLI to ~/.local/bin
+  update      git pull enodios + upgrade vLLM + refresh CLI link
   start       Run vLLM (foreground by default; -b/--background to detach)
   stop        Stop vLLM processes for this stack
   doctor      Check GPU, CUDA, venv, and endpoint health
@@ -31,13 +32,18 @@ Commands:
   bench       Tool-call latency test against vLLM
   configure   Point Hermes config at vLLM (local or remote URL)
   urls        Print vLLM API URLs (local + LAN for distributed Hermes)
+  firewall    Check / allow LAN firewall access for remote Hermes (port ${PORT})
   status      Show vLLM /v1/models status
   help        Show this help
 
 Environment:
+  ENODIOS_DIR     Git checkout for update (default: ~/.local/share/enodios/src)
   ENODIOS_DATA, ENODIOS_VENV, ENODIOS_PORT, ENODIOS_MODEL
   ENODIOS_GPU_UTIL, ENODIOS_MAX_MODEL_LEN, ENODIOS_PROVIDER
   ENODIOS_LOG, ENODIOS_PID_FILE
+  ENODIOS_FIREWALL=allow|skip  (non-interactive firewall prompt on start --lan)
+  ENODIOS_UPDATE_CHECK=skip    (disable update-available notice on start)
+  ENODIOS_UPDATE_CHECK_INTERVAL  Seconds between git fetches (default: 21600)
 
   vLLM binds 127.0.0.1 by default; use "start --lan" to expose on the LAN (no API auth)
 
@@ -69,9 +75,144 @@ ensure_uv() {
 }
 
 link_cli() {
+  local root="${1:-$ROOT}"
   mkdir -p "$HOME/.local/bin"
-  ln -sf "$ROOT/bin/enodios" "$HOME/.local/bin/enodios"
-  echo "Linked: $HOME/.local/bin/enodios"
+  ln -sf "$root/bin/enodios" "$HOME/.local/bin/enodios"
+  echo "Linked: $HOME/.local/bin/enodios -> $root/bin/enodios"
+}
+
+enodios_src_dir() {
+  if [[ -n "${ENODIOS_DIR:-}" ]] && [[ -d "${ENODIOS_DIR}/.git" ]]; then
+    echo "$(cd "${ENODIOS_DIR}" && pwd)"
+    return 0
+  fi
+  local default="$HOME/.local/share/enodios/src"
+  if [[ -d "$default/.git" ]]; then
+    echo "$default"
+    return 0
+  fi
+  if [[ -d "$ROOT/.git" ]]; then
+    echo "$ROOT"
+    return 0
+  fi
+  return 1
+}
+
+upgrade_vllm_venv() {
+  ensure_uv
+  mkdir -p "$DATA"
+  echo "== vLLM venv ($VENV) =="
+  if [[ ! -x "$VENV/bin/python" ]]; then
+    uv venv --python 3.12 --seed --managed-python "$VENV"
+  else
+    echo "Upgrading packages..."
+  fi
+  # shellcheck disable=SC1091
+  source "$VENV/bin/activate"
+  uv pip install --upgrade vllm --torch-backend=auto
+  python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available to PyTorch'"
+}
+
+update_usage() {
+  cat <<EOF
+Usage: enodios update
+
+  Pull latest enodios from git, refresh ~/.local/bin/enodios, upgrade vLLM in the venv.
+
+  Source checkout (first match):
+    \$ENODIOS_DIR, ~/.local/share/enodios/src, or this repo if run from a git clone.
+
+  Bootstrap (clone + update): curl -fsSL .../install.sh | bash
+EOF
+}
+
+cmd_update_venv() {
+  local src="${1:-$ROOT}"
+  upgrade_vllm_venv
+  link_cli "$src"
+  local rev="unknown"
+  if [[ -d "$src/.git" ]]; then
+    rev="$(git -C "$src" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  fi
+  echo ""
+  echo "Updated enodios @ ${rev}"
+  if vllm_ready; then
+    echo "vLLM is still running on the old build — restart: enodios stop && enodios start -b"
+  else
+    echo "Next: enodios start -b"
+  fi
+}
+
+enodios_upstream_ref() {
+  local src="$1"
+  local branch upstream
+  branch="$(git -C "$src" rev-parse --abbrev-ref HEAD 2>/dev/null)" || return 1
+  upstream="$(git -C "$src" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" \
+    || upstream="origin/${branch}"
+  echo "$upstream"
+}
+
+enodios_behind_upstream() {
+  local src="$1"
+  local upstream local_rev remote_rev
+  upstream="$(enodios_upstream_ref "$src")" || return 1
+  remote_rev="$(git -C "$src" rev-parse "$upstream" 2>/dev/null)" || return 1
+  local_rev="$(git -C "$src" rev-parse HEAD 2>/dev/null)" || return 1
+  [[ "$local_rev" == "$remote_rev" ]] && return 1
+  git -C "$src" merge-base --is-ancestor HEAD "$remote_rev" 2>/dev/null
+}
+
+maybe_notify_update_available() {
+  [[ "${ENODIOS_UPDATE_CHECK:-}" != skip ]] || return 0
+  local src
+  if ! src="$(enodios_src_dir)"; then
+    return 0
+  fi
+
+  local stamp_file="$DATA/last-update-check"
+  local now interval last_fetch=0
+  now="$(date +%s)"
+  interval="${ENODIOS_UPDATE_CHECK_INTERVAL:-21600}"
+  [[ -f "$stamp_file" ]] && last_fetch="$(cat "$stamp_file" 2>/dev/null || echo 0)"
+
+  if (( now - last_fetch >= interval )); then
+    if timeout 12 git -C "$src" fetch --quiet origin 2>/dev/null; then
+      echo "$now" >"$stamp_file"
+    fi
+  fi
+
+  if ! enodios_behind_upstream "$src"; then
+    return 0
+  fi
+
+  local upstream local_short remote_short
+  upstream="$(enodios_upstream_ref "$src")"
+  local_short="$(git -C "$src" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  remote_short="$(git -C "$src" rev-parse --short "$upstream" 2>/dev/null || echo unknown)"
+  echo "NOTE: enodios update available (${local_short} -> ${remote_short}). Run: enodios update"
+}
+
+cmd_update() {
+  require_linux
+  local src
+  if ! src="$(enodios_src_dir)"; then
+    echo "ERROR: no enodios git checkout found."
+    echo "Install first:"
+    echo "  curl -fsSL https://raw.githubusercontent.com/DataKnifeAI/enodios/main/install.sh | bash"
+    exit 1
+  fi
+
+  echo "== Update enodios =="
+  echo "source: $src"
+  if vllm_ready; then
+    echo "note:  vLLM is running — plan to restart after update"
+  fi
+  echo ""
+  echo "== git pull =="
+  git -C "$src" pull --ff-only
+  date +%s >"$DATA/last-update-check"
+  echo ""
+  exec "$src/bin/enodios" _update_venv "$src"
 }
 
 cmd_install() {
@@ -79,17 +220,7 @@ cmd_install() {
   echo "== GPU =="
   require_gpu || true
   ensure_uv
-  mkdir -p "$DATA"
-  echo "== vLLM venv ($VENV) =="
-  if [[ ! -x "$VENV/bin/python" ]]; then
-    uv venv --python 3.12 --seed --managed-python "$VENV"
-  else
-    echo "venv exists — upgrading packages"
-  fi
-  # shellcheck disable=SC1091
-  source "$VENV/bin/activate"
-  uv pip install vllm --torch-backend=auto
-  python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available to PyTorch'"
+  upgrade_vllm_venv
   link_cli
   if [[ -d /opt/cuda/bin ]] && ! grep -q 'CUDA_HOME=/opt/cuda' "$HOME/.bashrc" 2>/dev/null; then
     cat >> "$HOME/.bashrc" <<'EOF'
@@ -149,11 +280,12 @@ vllm_lan_bound() {
 
 start_usage() {
   cat <<EOF
-Usage: enodios start [-b|--background] [-l|--lan]
+Usage: enodios start [-b|--background] [-l|--lan] [--no-firewall]
 
   (default)   Bind 127.0.0.1 only (local Hermes on this machine)
   -l, --lan   Bind 0.0.0.0 — expose vLLM on the LAN for remote Hermes agents
   -b, --background   Detach; logs to \$ENODIOS_LOG (default: $LOG_FILE)
+  --no-firewall   Skip firewall detect/prompt (also: ENODIOS_FIREWALL=skip)
 
   Distributed Hermes: GPU host runs "enodios start -b --lan"; controller runs
   "enodios configure --url http://<gpu-host>:${PORT}/v1"
@@ -180,6 +312,197 @@ print_lan_warning() {
   echo "WARN: LAN mode — no API auth. Trusted local network only."
 }
 
+lan_subnet() {
+  local dev
+  dev="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit }}')"
+  [[ -n "$dev" ]] || return 1
+  ip -4 route show dev "$dev" 2>/dev/null \
+    | awk '/proto kernel scope link/ && $1 != "default" { print $1; exit }'
+}
+
+ufw_active() {
+  [[ -f /etc/ufw/ufw.conf ]] && grep -q '^ENABLED=yes' /etc/ufw/ufw.conf
+}
+
+firewalld_active() {
+  if command -v firewall-cmd &>/dev/null && firewall-cmd --state 2>/dev/null | grep -qi '^running'; then
+    return 0
+  fi
+  systemctl is-active firewalld &>/dev/null
+}
+
+firewall_backend() {
+  if command -v ufw &>/dev/null && ufw_active; then
+    echo ufw
+    return 0
+  fi
+  if firewalld_active; then
+    echo firewalld
+    return 0
+  fi
+  echo none
+}
+
+ufw_port_allowed() {
+  local port="$1"
+  if [[ -r /etc/ufw/user.rules ]] \
+    && grep -qE "ufw-user-input -p tcp --dport ${port}( |$)" /etc/ufw/user.rules; then
+    return 0
+  fi
+  if command -v ufw &>/dev/null; then
+    sudo ufw status 2>/dev/null \
+      | grep -qE "(ALLOW|ALLOW IN).*[[:space:]]${port}(/tcp)?([[:space:]]|$)" \
+      && return 0
+    sudo ufw status numbered 2>/dev/null | grep -qE "${port}(/tcp)?"
+  fi
+}
+
+firewall_port_allowed() {
+  local backend="$1"
+  local port="$2"
+  case "$backend" in
+    ufw)
+      ufw_port_allowed "$port"
+      ;;
+    firewalld)
+      firewall-cmd --query-port="${port}/tcp" &>/dev/null \
+        || sudo firewall-cmd --query-port="${port}/tcp" &>/dev/null
+      ;;
+    none)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+firewall_allow_lan_port() {
+  local backend="$1"
+  local port="$2"
+  local subnet="${3:-}"
+  case "$backend" in
+    ufw)
+      if [[ -n "$subnet" ]]; then
+        sudo ufw allow from "$subnet" to any port "$port" proto tcp comment 'enodios vLLM'
+      else
+        sudo ufw allow "${port}/tcp" comment 'enodios vLLM'
+      fi
+      ;;
+    firewalld)
+      sudo firewall-cmd --permanent --add-port="${port}/tcp"
+      sudo firewall-cmd --reload
+      ;;
+    *)
+      echo "No supported firewall backend to configure."
+      return 1
+      ;;
+  esac
+}
+
+firewall_status_line() {
+  local backend
+  backend="$(firewall_backend)"
+  case "$backend" in
+    none)
+      echo "firewall: none detected (or inactive)"
+      return 0
+      ;;
+    ufw|firewalld)
+      if firewall_port_allowed "$backend" "$PORT"; then
+        echo "firewall: ${backend} — port ${PORT}/tcp allowed"
+        return 0
+      fi
+      echo "firewall: ${backend} active — port ${PORT}/tcp NOT open for LAN clients"
+      return 1
+      ;;
+  esac
+}
+
+maybe_ensure_firewall_lan() {
+  local mode="${1:-prompt}"
+  local backend subnet
+  backend="$(firewall_backend)"
+  [[ "$backend" != none ]] || return 0
+  if firewall_port_allowed "$backend" "$PORT"; then
+    echo "Firewall: ${backend} allows TCP ${PORT}"
+    return 0
+  fi
+
+  subnet="$(lan_subnet || true)"
+  echo ""
+  echo "Firewall (${backend}) may block remote Hermes clients on port ${PORT}."
+  if [[ -n "$subnet" ]]; then
+    echo "Suggested: allow from ${subnet} to port ${PORT}/tcp"
+  else
+    echo "Suggested: allow port ${PORT}/tcp"
+  fi
+
+  case "$mode" in
+    check) return 1 ;;
+    allow)
+      firewall_allow_lan_port "$backend" "$PORT" "$subnet"
+      echo "Firewall updated."
+      return 0
+      ;;
+  esac
+
+  if [[ "${ENODIOS_FIREWALL:-}" == skip ]]; then
+    echo "Skipped (ENODIOS_FIREWALL=skip). Run: enodios firewall --allow"
+    return 1
+  fi
+  if [[ "${ENODIOS_FIREWALL:-}" == allow ]]; then
+    firewall_allow_lan_port "$backend" "$PORT" "$subnet"
+    echo "Firewall updated."
+    return 0
+  fi
+  if [[ ! -t 0 ]]; then
+    echo "Non-interactive shell — run: enodios firewall --allow"
+    return 1
+  fi
+
+  local ans
+  read -r -p "Allow LAN access on port ${PORT}? [Y/n]: " ans
+  case "${ans,,}" in
+    n|no)
+      echo "Skipped. Remote clients may be unreachable until you run: enodios firewall --allow"
+      return 1
+      ;;
+    *)
+      firewall_allow_lan_port "$backend" "$PORT" "$subnet"
+      echo "Firewall updated."
+      return 0
+      ;;
+  esac
+}
+
+firewall_usage() {
+  cat <<EOF
+Usage: enodios firewall [--check|--allow]
+
+  Check whether the host firewall allows remote access to vLLM on port ${PORT}.
+  With --lan / distributed Hermes, remote clients need TCP ${PORT} open.
+
+  --check   Exit 0 if port is allowed (or no firewall), 1 if blocked
+  --allow   Add firewall rule without prompting (requires sudo)
+EOF
+}
+
+cmd_firewall() {
+  local mode=prompt
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --check) mode=check; shift ;;
+      --allow) mode=allow; shift ;;
+      -h|--help) firewall_usage; return 0 ;;
+      *) echo "Unknown option: $1"; firewall_usage; exit 1 ;;
+    esac
+  done
+
+  firewall_status_line || true
+  maybe_ensure_firewall_lan "$mode"
+}
+
 prepare_vllm() {
   require_venv
   # shellcheck disable=SC1091
@@ -192,19 +515,26 @@ prepare_vllm() {
 cmd_start() {
   local background=0
   local bind_host="127.0.0.1"
+  local skip_firewall=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -b|--background) background=1; shift ;;
       -l|--lan) bind_host="0.0.0.0"; shift ;;
+      --no-firewall) skip_firewall=1; shift ;;
       -h|--help) start_usage; return 0 ;;
       *) echo "Unknown option: $1"; start_usage; exit 1 ;;
     esac
   done
+  [[ "$skip_firewall" -eq 0 ]] || export ENODIOS_FIREWALL=skip
+  maybe_notify_update_available || true
 
   if vllm_ready; then
     echo "vLLM already running on $(vllm_local_base)"
     [[ -f "$PID_FILE" ]] && echo "pid: $(cat "$PID_FILE")"
     cmd_urls 2>/dev/null || true
+    if [[ "$bind_host" == "0.0.0.0" ]] || vllm_lan_bound; then
+      maybe_ensure_firewall_lan prompt || true
+    fi
     return 0
   fi
 
@@ -216,6 +546,7 @@ cmd_start() {
     local lan
     lan="$(vllm_lan_base)"
     [[ -n "$lan" ]] && echo "LAN API:   ${lan}"
+    maybe_ensure_firewall_lan prompt || true
   fi
 
   if [[ "$background" -eq 0 ]]; then
@@ -257,6 +588,7 @@ cmd_start() {
         lan="$(vllm_lan_base)"
         [[ -n "$lan" ]] && echo "LAN:   ${lan}"
         echo "Remote Hermes: enodios configure --url ${lan:-http://<this-host>:${PORT}/v1}"
+        firewall_status_line || true
       fi
       return 0
     fi
@@ -505,7 +837,8 @@ print()
 print("== Hermes Agent requirements ==")
 print(f"  context_length >= {HERMES_MIN_CTX} (agent tool loops)")
 print("  model with native tool calling + hermes parser")
-print("  Hermes CLI: hermes setup && enodios configure")
+print("  Hermes CLI: hermes setup → Full setup → Inference Provider → Custom")
+print("              (or: enodios configure)")
 print()
 
 print("== Recommendation ==")
@@ -610,10 +943,14 @@ cmd_doctor() {
     if vllm_lan_bound; then
       echo ""
       print_lan_warning
+      firewall_status_line || maybe_ensure_firewall_lan prompt || true
     fi
   else
     echo "vLLM not running on port ${PORT} (enodios start)"
   fi
+  echo ""
+  echo "== Firewall =="
+  firewall_status_line || true
 }
 
 cmd_urls() {
@@ -737,6 +1074,14 @@ cmd_status() {
 main() {
   case "${1:-help}" in
     install) cmd_install ;;
+    update)
+      shift
+      case "${1:-}" in
+        -h|--help) update_usage ;;
+        *) cmd_update "$@" ;;
+      esac
+      ;;
+    _update_venv) shift; cmd_update_venv "${1:-$ROOT}" ;;
     start) shift; cmd_start "$@" ;;
     stop) cmd_stop ;;
     doctor) cmd_doctor ;;
@@ -750,6 +1095,13 @@ main() {
     bench) cmd_bench ;;
     configure) shift; cmd_configure "$@" ;;
     urls) cmd_urls ;;
+    firewall)
+      shift
+      case "${1:-}" in
+        -h|--help) firewall_usage ;;
+        *) cmd_firewall "$@" ;;
+      esac
+      ;;
     status) cmd_status ;;
     help|-h|--help) usage ;;
     *) echo "Unknown command: $1"; usage; exit 1 ;;
