@@ -73,7 +73,11 @@ cmd_install() {
   ensure_uv
   mkdir -p "$DATA"
   echo "== vLLM venv ($VENV) =="
-  uv venv --python 3.12 --seed --managed-python "$VENV"
+  if [[ ! -x "$VENV/bin/python" ]]; then
+    uv venv --python 3.12 --seed --managed-python "$VENV"
+  else
+    echo "venv exists — upgrading packages"
+  fi
   # shellcheck disable=SC1091
   source "$VENV/bin/activate"
   uv pip install vllm --torch-backend=auto
