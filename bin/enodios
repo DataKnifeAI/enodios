@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+# Enodios — Hermes Agent + vLLM local stack (Ἐνόδιος: Hermes of the road).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DATA="${ENODIOS_DATA:-$HOME/.local/share/enodios}"
+VENV="${ENODIOS_VENV:-$DATA/.venv}"
+PORT="${ENODIOS_PORT:-8000}"
+MODEL="${ENODIOS_MODEL:-solidrust/Hermes-3-Llama-3.1-8B-AWQ}"
+SERVED_NAME="${ENODIOS_SERVED_NAME:-hermes3:8b}"
+MAX_LEN="${ENODIOS_MAX_MODEL_LEN:-16384}"
+GPU_UTIL="${ENODIOS_GPU_UTIL:-0.65}"
+PROVIDER_NAME="${ENODIOS_PROVIDER:-enodios}"
+HERMES_CONFIG="${HERMES_CONFIG:-$HOME/.hermes/config.yaml}"
+
+usage() {
+  cat <<EOF
+Enodios — local Hermes Agent + vLLM (Hermes of the road)
+
+Usage: enodios <command>
+
+Commands:
+  install     Install uv venv + vLLM, link this CLI to ~/.local/bin
+  start       Run vLLM in foreground (Ctrl+C to stop)
+  stop        Stop vLLM processes for this stack
+  doctor      Check GPU, CUDA, venv, and endpoint health
+  bench       Tool-call latency test against vLLM
+  configure   Point Hermes config at local vLLM
+  status      Show vLLM /v1/models status
+  help        Show this help
+
+Environment:
+  ENODIOS_DATA, ENODIOS_VENV, ENODIOS_PORT, ENODIOS_MODEL
+  ENODIOS_GPU_UTIL, ENODIOS_MAX_MODEL_LEN, ENODIOS_PROVIDER
+
+Docs: https://github.com/DataKnifeAI/enodios
+EOF
+}
+
+require_linux() {
+  [[ "$(uname -s)" == Linux ]] || { echo "ERROR: Linux only"; exit 1; }
+}
+
+require_gpu() {
+  if ! command -v nvidia-smi &>/dev/null; then
+    echo "WARN: nvidia-smi not found — GPU inference will not work"
+    return 1
+  fi
+  nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
+}
+
+ensure_uv() {
+  if command -v uv &>/dev/null; then
+    return 0
+  fi
+  echo "Installing uv..."
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$PATH"
+  command -v uv &>/dev/null || { echo "ERROR: uv install failed"; exit 1; }
+}
+
+link_cli() {
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "$ROOT/bin/enodios" "$HOME/.local/bin/enodios"
+  echo "Linked: $HOME/.local/bin/enodios"
+}
+
+cmd_install() {
+  require_linux
+  echo "== GPU =="
+  require_gpu || true
+  ensure_uv
+  mkdir -p "$DATA"
+  echo "== vLLM venv ($VENV) =="
+  uv venv --python 3.12 --seed --managed-python "$VENV"
+  # shellcheck disable=SC1091
+  source "$VENV/bin/activate"
+  uv pip install vllm --torch-backend=auto
+  python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available to PyTorch'"
+  link_cli
+  if [[ -d /opt/cuda/bin ]] && ! grep -q 'CUDA_HOME=/opt/cuda' "$HOME/.bashrc" 2>/dev/null; then
+    cat >> "$HOME/.bashrc" <<'EOF'
+
+# enodios: CUDA toolkit for FlashInfer JIT (optional)
+export CUDA_HOME=/opt/cuda
+export PATH="$CUDA_HOME/bin:$PATH"
+EOF
+    echo "Appended CUDA_HOME hints to ~/.bashrc (optional FlashInfer speedup)"
+  fi
+  echo ""
+  echo "Done. Next:"
+  echo "  enodios doctor"
+  echo "  enodios start      # separate terminal"
+  echo "  enodios configure"
+  echo "  hermes chat"
+}
+
+require_venv() {
+  if [[ ! -x "$VENV/bin/vllm" ]]; then
+    echo "ERROR: vLLM not installed. Run: enodios install"
+    exit 1
+  fi
+}
+
+vllm_env() {
+  export VLLM_USE_FLASHINFER_SAMPLER=0
+  if [[ -n "${CUDA_HOME:-}" ]] && [[ -x "${CUDA_HOME}/bin/nvcc" ]]; then
+    unset VLLM_USE_FLASHINFER_SAMPLER
+  fi
+}
+
+cmd_start() {
+  require_venv
+  # shellcheck disable=SC1091
+  source "$VENV/bin/activate"
+  vllm_env
+  echo "Starting vLLM on http://127.0.0.1:${PORT}/v1 (model=${SERVED_NAME})"
+  exec vllm serve "$MODEL" \
+    --host 127.0.0.1 \
+    --port "$PORT" \
+    --max-model-len "$MAX_LEN" \
+    --gpu-memory-utilization "$GPU_UTIL" \
+    --quantization awq \
+    --enable-auto-tool-choice \
+    --tool-call-parser hermes \
+    --served-model-name "$SERVED_NAME" \
+    --no-enable-flashinfer-autotune
+}
+
+cmd_stop() {
+  pkill -f "${VENV}/bin/vllm serve" 2>/dev/null || true
+  pkill -f 'vllm serve.*hermes3:8b' 2>/dev/null || true
+  sleep 1
+  if curl -sf --max-time 2 "http://127.0.0.1:${PORT}/v1/models" &>/dev/null; then
+    echo "WARN: port ${PORT} still responding"
+  else
+    echo "vLLM stopped (port ${PORT} down)"
+  fi
+}
+
+cmd_doctor() {
+  echo "== enodios =="
+  echo "data:  $DATA"
+  echo "venv:  $VENV"
+  echo "port:  $PORT"
+  echo "model: $MODEL -> $SERVED_NAME"
+  echo ""
+  echo "== GPU =="
+  require_gpu || true
+  echo ""
+  echo "== CUDA toolkit =="
+  if command -v nvcc &>/dev/null; then
+    nvcc --version | tail -1
+  elif [[ -x /opt/cuda/bin/nvcc ]]; then
+    echo "nvcc at /opt/cuda/bin/nvcc (not in PATH — set CUDA_HOME=/opt/cuda)"
+  else
+    echo "nvcc not found (OK — PyTorch sampler fallback enabled)"
+  fi
+  echo ""
+  echo "== vLLM venv =="
+  if [[ -x "$VENV/bin/vllm" ]]; then
+    echo "OK: $VENV/bin/vllm"
+    # shellcheck disable=SC1091
+    source "$VENV/bin/activate"
+    python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
+  else
+    echo "MISSING: run enodios install"
+  fi
+  echo ""
+  echo "== Hermes =="
+  if command -v hermes &>/dev/null; then
+    echo "OK: $(command -v hermes)"
+  else
+    echo "hermes CLI not found — install: https://github.com/NousResearch/hermes-agent"
+  fi
+  echo ""
+  echo "== Endpoint =="
+  if curl -sf --max-time 3 "http://127.0.0.1:${PORT}/v1/models" | python3 -m json.tool 2>/dev/null | head -15; then
+    true
+  else
+    echo "vLLM not running on port ${PORT} (enodios start)"
+  fi
+}
+
+cmd_bench() {
+  python3 <<PY
+import json, subprocess, time, sys
+url = "http://127.0.0.1:${PORT}/v1/chat/completions"
+model = "${SERVED_NAME}"
+tool = [{"type":"function","function":{"name":"calculator","description":"add","parameters":{"type":"object","properties":{"a":{"type":"number"},"b":{"type":"number"}},"required":["a","b"]}}}]
+payload = {"model":model,"messages":[{"role":"user","content":"calculator a=2 b=2"}],"tools":tool,"tool_choice":"required","max_tokens":80,"temperature":0}
+t0 = time.time()
+r = subprocess.run(["curl","-s",url,"-H","Content-Type: application/json","-d",json.dumps(payload)],capture_output=True,text=True)
+dt = time.time()-t0
+try:
+    d = json.loads(r.stdout)
+    tc = d["choices"][0]["message"].get("tool_calls")
+    print(f"latency={dt:.2f}s tool_calls={bool(tc)}")
+    if tc: print(json.dumps(tc[0], indent=2))
+    sys.exit(0 if tc else 1)
+except Exception as e:
+    print("FAIL:", e, r.stdout[:300])
+    sys.exit(1)
+PY
+}
+
+cmd_configure() {
+  mkdir -p "$(dirname "$HERMES_CONFIG")"
+  if [[ ! -f "$HERMES_CONFIG" ]]; then
+    echo "ERROR: $HERMES_CONFIG not found — run hermes setup first"
+    exit 1
+  fi
+  cp -a "$HERMES_CONFIG" "${HERMES_CONFIG}.bak.$(date +%Y%m%d%H%M%S)"
+  python3 <<PY
+from pathlib import Path
+import re
+path = Path("${HERMES_CONFIG}")
+text = path.read_text()
+provider = "${PROVIDER_NAME}"
+port = "${PORT}"
+model = "${SERVED_NAME}"
+ctx = ${MAX_LEN}
+base = f"http://127.0.0.1:{port}/v1"
+
+# model block
+text = re.sub(r"(?m)^  default:.*", f"  default: {model}", text, count=1)
+text = re.sub(r"(?m)^  provider:.*", f"  provider: custom:{provider}", text, count=1)
+text = re.sub(r"(?m)^  context_length:.*", f"  context_length: {ctx}", text, count=1)
+
+block = f"""  - name: {provider}
+    base_url: {base}
+    models:
+      {model}:
+        context_length: {ctx}
+"""
+if "custom_providers:" not in text:
+    text += f"\ncustom_providers:\n{block}"
+else:
+    # replace or append provider entry
+    pat = rf"(?ms)  - name: {re.escape(provider)}\n.*?(?=\n  - name:|\nz|\n#|\nfallback_providers:|\n[a-z_]+:)"
+    if re.search(pat, text):
+        text = re.sub(pat, block.rstrip() + "\n", text)
+    else:
+        text = text.replace("custom_providers:\n", f"custom_providers:\n{block}", 1)
+
+path.write_text(text)
+print(f"Updated {path}")
+print(f"  provider: custom:{provider}")
+print(f"  base_url: {base}")
+print(f"  model:    {model}")
+PY
+  echo "Backup saved alongside config. Run: hermes chat"
+}
+
+cmd_status() {
+  curl -sf "http://127.0.0.1:${PORT}/v1/models" | python3 -m json.tool 2>/dev/null || echo "down"
+}
+
+main() {
+  case "${1:-help}" in
+    install) cmd_install ;;
+    start) cmd_start ;;
+    stop) cmd_stop ;;
+    doctor) cmd_doctor ;;
+    bench) cmd_bench ;;
+    configure) cmd_configure ;;
+    status) cmd_status ;;
+    help|-h|--help) usage ;;
+    *) echo "Unknown command: $1"; usage; exit 1 ;;
+  esac
+}
+
+main "$@"
