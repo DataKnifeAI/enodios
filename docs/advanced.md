@@ -26,7 +26,7 @@ Full guide for Hermes wiring, distributed setups, tuning, and troubleshooting.
 | **NVIDIA driver** | `nvidia-smi` must work — `enodios deps` checks and can install |
 | **curl, git** | For bootstrap — installed by `enodios deps` if missing |
 | **Hermes Agent** | Install **after** Enodios — vLLM must be up before `hermes setup` |
-| **Python 3.12** | Installed via `uv` automatically |
+| **Python 3.14** | Installed via `uv` automatically (`ENODIOS_PYTHON` to override) |
 | **CUDA toolkit** | Optional. Speeds up sampling; not required |
 
 ### What Enodios installs
@@ -211,6 +211,7 @@ vLLM has **no API authentication**. Use `--lan` only on a trusted network.
 | Log | `~/.local/share/enodios/vllm.log` |
 
 ```bash
+export ENODIOS_PYTHON=3.14
 export ENODIOS_PORT=8000
 export ENODIOS_MODEL=solidrust/Hermes-3-Llama-3.1-8B-AWQ
 export ENODIOS_GPU_UTIL=0.85

@@ -15,6 +15,7 @@ PROVIDER_NAME="${ENODIOS_PROVIDER:-enodios}"
 HERMES_CONFIG="${HERMES_CONFIG:-$HOME/.hermes/config.yaml}"
 LOG_FILE="${ENODIOS_LOG:-$DATA/vllm.log}"
 PID_FILE="${ENODIOS_PID_FILE:-$DATA/vllm.pid}"
+PYTHON="${ENODIOS_PYTHON:-3.14}"
 
 usage() {
   cat <<EOF
@@ -40,6 +41,7 @@ Commands:
 
 Environment:
   ENODIOS_DIR     Git checkout for update (default: ~/.local/share/enodios/src)
+  ENODIOS_PYTHON   Python for vLLM venv (default: 3.14)
   ENODIOS_DATA, ENODIOS_VENV, ENODIOS_PORT, ENODIOS_MODEL
   ENODIOS_GPU_UTIL, ENODIOS_MAX_MODEL_LEN, ENODIOS_PROVIDER
   ENODIOS_LOG, ENODIOS_PID_FILE
@@ -465,12 +467,24 @@ enodios_src_dir() {
   return 1
 }
 
+venv_python_version() {
+  "$VENV/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true
+}
+
 upgrade_vllm_venv() {
   ensure_uv
   mkdir -p "$DATA"
-  echo "== vLLM venv ($VENV) =="
+  echo "== vLLM venv ($VENV, Python ${PYTHON}) =="
+  if [[ -x "$VENV/bin/python" ]]; then
+    local current
+    current="$(venv_python_version)"
+    if [[ -n "$current" && "$current" != "$PYTHON" ]]; then
+      echo "Recreating venv: Python ${current} -> ${PYTHON}"
+      rm -rf "$VENV"
+    fi
+  fi
   if [[ ! -x "$VENV/bin/python" ]]; then
-    uv venv --python 3.12 --seed --managed-python "$VENV"
+    uv venv --python "$PYTHON" --seed --managed-python "$VENV"
   else
     echo "Upgrading packages..."
   fi
@@ -1315,7 +1329,7 @@ cmd_doctor() {
   echo ""
   echo "== vLLM venv =="
   if [[ -x "$VENV/bin/vllm" ]]; then
-    echo "OK: $VENV/bin/vllm"
+    echo "OK: $VENV/bin/vllm (Python $(venv_python_version || echo unknown), target ${PYTHON})"
     # shellcheck disable=SC1091
     source "$VENV/bin/activate"
     python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
