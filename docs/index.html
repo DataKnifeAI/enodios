@@ -673,6 +673,7 @@
         <a href="#philosophy">Philosophy</a>
         <a href="#models">Models</a>
         <a href="#distributed">Distributed</a>
+        <a href="#orchestrator">Orchestrator</a>
         <a href="#hermes-wizard">Hermes wizard</a>
         <a href="#quickstart">Quick start</a>
         <a href="#commands">Commands</a>
@@ -922,6 +923,68 @@
       </div>
       <p style="margin-top: 1rem; font-size: 0.9rem; color: var(--warn)">
         <strong>No API auth.</strong> <code>--lan</code> exposes an unauthenticated OpenAI-compatible API — trusted local network only.
+      </p>
+    </section>
+
+    <section id="orchestrator">
+      <div class="section-label">Multi-agent</div>
+      <h2>Orchestrator + sub-agents</h2>
+      <p class="section-intro">
+        One <strong>Hermes orchestrator</strong> plans work and delegates to many <strong>client Hermes</strong> agents —
+        each client runs scoped sub-tasks with its own tools while inference flows through Enodios vLLM on your GPU hosts.
+      </p>
+      <div class="grid" style="margin-bottom: 1.25rem">
+        <div class="card"><strong>Orchestrator</strong><span>Plans · delegates · merges results</span></div>
+        <div class="card"><strong>Client Hermes</strong><span>One per repo, VM, or sandbox</span></div>
+        <div class="card"><strong>GPU host(s)</strong><span><code>enodios start -b --lan</code> per inference box</span></div>
+      </div>
+      <div class="arch-flow" style="flex-wrap: wrap; justify-content: center; gap: 0.5rem 0">
+        <div class="arch-node">
+          <div class="label">You</div>
+          <div class="name">Operator</div>
+          <div class="detail">High-level goal</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node highlight">
+          <div class="label">Orchestrator</div>
+          <div class="name">Hermes Agent</div>
+          <div class="detail">Plan · delegate</div>
+        </div>
+        <div class="arch-arrow">⇢</div>
+        <div class="arch-node highlight">
+          <div class="label">Clients</div>
+          <div class="name">Hermes × N</div>
+          <div class="detail">Sub-agent tasks</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node">
+          <div class="label">Tools</div>
+          <div class="name">Scoped</div>
+          <div class="detail">Per client · per repo</div>
+        </div>
+      </div>
+      <div class="arch-flow" style="margin-top: 1rem">
+        <div class="arch-node highlight">
+          <div class="label">Orchestrator</div>
+          <div class="name">Hermes</div>
+          <div class="detail">Planner inference</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node">
+          <div class="label">LAN</div>
+          <div class="name">:8000/v1</div>
+          <div class="detail">Enodios</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node highlight">
+          <div class="label">GPU host</div>
+          <div class="name">vLLM</div>
+          <div class="detail">Shared or per-client</div>
+        </div>
+      </div>
+      <p style="margin-top: 1rem; font-size: 0.9rem; color: var(--dim)">
+        Each client machine: <code>enodios configure --url http://&lt;gpu-host&gt;:8000/v1</code> then <code>hermes chat</code>.
+        <a href="https://github.com/DataKnifeAI/enodios/blob/main/docs/advanced.md#orchestrator--sub-agents">Full setup →</a>
       </p>
     </section>
 

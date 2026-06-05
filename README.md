@@ -87,6 +87,25 @@ flowchart LR
   V --> G[NVIDIA GPU]
 ```
 
+**Orchestrator + sub-agents** — see [advanced guide](docs/advanced.md#orchestrator--sub-agents):
+
+```mermaid
+flowchart TB
+  U[You] --> O[Hermes Orchestrator]
+  O -->|delegate| C1[Client Hermes]
+  O -->|delegate| C2[Client Hermes]
+  O -->|delegate| C3[Client Hermes]
+  O -->|plan :8000/v1| VO[vLLM]
+  C1 -->|infer| V[vLLM via Enodios]
+  C2 -->|infer| V
+  C3 -->|infer| V
+  C1 --> T1[Sub-task tools]
+  C2 --> T2[Sub-task tools]
+  C3 --> T3[Sub-task tools]
+  VO --> G[NVIDIA GPU hosts]
+  V --> G
+```
+
 ---
 
 ## License

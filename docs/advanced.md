@@ -196,6 +196,57 @@ vLLM has **no API authentication**. Use `--lan` only on a trusted network.
 
 ---
 
+## Orchestrator + sub-agents
+
+One **orchestrator** Hermes plans work and delegates **sub-agent** Hermes clients — each client runs scoped tools on its own machine while sharing Enodios vLLM endpoints.
+
+```mermaid
+flowchart TB
+  U[You] --> O[Hermes Orchestrator]
+  O -->|delegate sub-task| C1[Client Hermes A]
+  O -->|delegate sub-task| C2[Client Hermes B]
+  O -->|delegate sub-task| C3[Client Hermes C]
+  O -->|planning| VO[vLLM orchestrator]
+  C1 -->|infer| V1[vLLM worker]
+  C2 -->|infer| V2[vLLM worker]
+  C3 -->|infer| V1
+  C1 --> T1[Tools: repo A]
+  C2 --> T2[Tools: repo B]
+  C3 --> T3[Tools: sandbox C]
+  VO --> G[GPU hosts]
+  V1 --> G
+  V2 --> G
+```
+
+**Typical layout**
+
+| Role | Machine | Enodios |
+|------|---------|---------|
+| Orchestrator | Your laptop / controller | `enodios configure` → local or remote planner vLLM |
+| Client A, B, … | Per repo, VM, or teammate box | `enodios configure --url http://<gpu-host>:8000/v1` |
+| GPU host(s) | Inference server(s) | `enodios start -b --lan` on each |
+
+The orchestrator breaks goals into parallel sub-tasks; each client Hermes gets a narrow tool scope (one repo, one container, one directory tree). Clients can share one vLLM host or fan out across several Enodios instances on different GPUs.
+
+**Setup sketch**
+
+```bash
+# GPU host
+enodios start -b --lan && enodios urls
+
+# Orchestrator machine
+enodios configure --url http://<gpu-host>:8000/v1
+hermes chat   # plans and delegates
+
+# Each client machine (sub-agent)
+enodios configure --url http://<gpu-host>:8000/v1   # or a second GPU host
+hermes chat   # scoped tools for its sub-task
+```
+
+Use separate Hermes configs/providers per client if you want different `base_url` or model names. vLLM has no auth — keep `--lan` on trusted networks only.
+
+---
+
 ## Defaults & environment
 
 | Setting | Value |
@@ -328,6 +379,25 @@ flowchart LR
   C -->|LAN :8000/v1| V[vLLM on GPU host]
   V --> G[NVIDIA GPU]
   C --> T[Tools on controller]
+```
+
+**Orchestrator + sub-agents:**
+
+```mermaid
+flowchart TB
+  U[You] --> O[Hermes Orchestrator]
+  O --> C1[Client Hermes A]
+  O --> C2[Client Hermes B]
+  O --> C3[Client Hermes C]
+  O --> VO[vLLM planner]
+  C1 --> V[vLLM workers]
+  C2 --> V
+  C3 --> V
+  C1 --> T1[Scoped tools]
+  C2 --> T2[Scoped tools]
+  C3 --> T3[Scoped tools]
+  VO --> G[GPU hosts]
+  V --> G
 ```
 
 ---
