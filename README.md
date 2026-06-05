@@ -48,7 +48,8 @@ enodios stop      # resume: enodios start -b
 
 | Command | Description |
 |---------|-------------|
-| `enodios install` | venv + vLLM + CLI link |
+| `enodios deps` | Check OS GPU deps (apt/dnf/yum/zypper/pacman); `--install` |
+| `enodios install` | OS deps check + venv + vLLM + CLI link |
 | `enodios update` | git pull + upgrade vLLM |
 | `enodios recommend` | GPU → model/settings (`--apply` to save) |
 | `enodios start -b` | Background vLLM (loopback) |

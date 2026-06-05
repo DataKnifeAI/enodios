@@ -23,8 +23,8 @@ Full guide for Hermes wiring, distributed setups, tuning, and troubleshooting.
 | Requirement | Notes |
 |-------------|-------|
 | **Linux** | x86_64. Arch, Ubuntu, Fedora, etc. |
-| **NVIDIA driver** | `nvidia-smi` must work |
-| **curl, git** | For bootstrap |
+| **NVIDIA driver** | `nvidia-smi` must work — `enodios deps` checks and can install |
+| **curl, git** | For bootstrap — installed by `enodios deps` if missing |
 | **Hermes Agent** | Install **after** Enodios — vLLM must be up before `hermes setup` |
 | **Python 3.12** | Installed via `uv` automatically |
 | **CUDA toolkit** | Optional. Speeds up sampling; not required |
@@ -39,6 +39,24 @@ Full guide for Hermes wiring, distributed setups, tuning, and troubleshooting.
 
 - **HuggingFace** for first model download (no token for public AWQ weights)
 - **No** ongoing cloud inference dependency
+
+### OS dependencies (`enodios deps`)
+
+Checks and optionally installs:
+
+- **Required:** `curl`, `git`, NVIDIA driver (`nvidia-smi` working)
+- **Optional:** CUDA toolkit (`nvcc`) for FlashInfer speedup
+- **Package managers:** `pacman`, `apt`, `dnf`, `yum`, `zypper` (auto-detected)
+
+```bash
+enodios deps           # check + prompt to install
+enodios deps --check   # exit 1 if required deps missing
+enodios deps --install # install without prompting (sudo)
+```
+
+`enodios install` runs the same check first. Skip prompts: `ENODIOS_DEPS=skip`. Auto-install: `ENODIOS_DEPS=allow`.
+
+NVIDIA driver install may require a **reboot** before `nvidia-smi` works.
 
 ---
 

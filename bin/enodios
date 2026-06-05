@@ -23,6 +23,7 @@ Enodios — local Hermes Agent + vLLM (Hermes of the road)
 Usage: enodios <command>
 
 Commands:
+  deps        Check OS packages for GPU inference (curl, git, NVIDIA driver)
   install     Install uv venv + vLLM, link this CLI to ~/.local/bin
   update      git pull enodios + upgrade vLLM + refresh CLI link
   start       Run vLLM (foreground by default; -b/--background to detach)
@@ -45,6 +46,7 @@ Environment:
   ENODIOS_FIREWALL=allow|skip  (non-interactive firewall prompt on start --lan)
   ENODIOS_UPDATE_CHECK=skip    (disable update-available notice on start)
   ENODIOS_UPDATE_CHECK_INTERVAL  Seconds between git fetches (default: 21600)
+  ENODIOS_DEPS=allow|skip      (non-interactive deps prompt on install)
 
   vLLM binds 127.0.0.1 by default; use "start --lan" to expose on the LAN (no API auth)
 
@@ -55,6 +57,370 @@ EOF
 
 require_linux() {
   [[ "$(uname -s)" == Linux ]] || { echo "ERROR: Linux only"; exit 1; }
+}
+
+os_family() {
+  local id id_like
+  [[ -f /etc/os-release ]] || { echo unknown; return; }
+  # shellcheck disable=SC1091
+  source /etc/os-release
+  id="${ID,,}"
+  id_like="${ID_LIKE,,}"
+  case "$id" in
+    arch|cachyos|manjaro|endeavouros|garuda) echo arch; return ;;
+    ubuntu|debian|linuxmint|pop|neon|elementary|zorin|kali) echo debian; return ;;
+    fedora|nobara|ultramarine) echo fedora; return ;;
+    rhel|centos|rocky|almalinux|ol|amzn) echo rhel; return ;;
+    opensuse*|sles|sled) echo suse; return ;;
+  esac
+  [[ "$id_like" == *arch* ]] && echo arch && return
+  [[ "$id_like" == *debian* ]] && echo debian && return
+  [[ "$id_like" == *fedora* ]] && echo fedora && return
+  [[ "$id_like" == *rhel* ]] && echo rhel && return
+  [[ "$id_like" == *suse* ]] && echo suse && return
+  echo unknown
+}
+
+pkg_backend() {
+  if command -v pacman &>/dev/null; then
+    echo pacman
+  elif command -v apt &>/dev/null; then
+    echo apt
+  elif command -v apt-get &>/dev/null; then
+    echo apt
+  elif command -v dnf &>/dev/null; then
+    echo dnf
+  elif command -v yum &>/dev/null; then
+    echo yum
+  elif command -v zypper &>/dev/null; then
+    echo zypper
+  else
+    echo unknown
+  fi
+}
+
+nvidia_smi_ok() {
+  command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null
+}
+
+nvcc_ok() {
+  command -v nvcc &>/dev/null || [[ -x /opt/cuda/bin/nvcc ]]
+}
+
+pkg_update() {
+  local backend="$1"
+  case "$backend" in
+    apt)
+      if command -v apt &>/dev/null; then
+        sudo apt update -qq
+      else
+        sudo apt-get update -qq
+      fi
+      ;;
+    dnf) sudo dnf makecache -q ;;
+    yum) sudo yum makecache -q || true ;;
+    zypper) sudo zypper --non-interactive refresh -q ;;
+    pacman) ;;
+    *) return 1 ;;
+  esac
+}
+
+pkg_install() {
+  local backend="$1"
+  shift
+  local -a pkgs=("$@")
+  [[ ${#pkgs[@]} -gt 0 ]] || return 0
+  [[ "$backend" != unknown ]] || return 1
+
+  echo "+ ${backend} install ${pkgs[*]}"
+  case "$backend" in
+    pacman)
+      sudo pacman -S --needed --noconfirm "${pkgs[@]}"
+      ;;
+    apt)
+      pkg_update apt
+      if command -v apt &>/dev/null; then
+        sudo apt install -y "${pkgs[@]}"
+      else
+        sudo apt-get install -y "${pkgs[@]}"
+      fi
+      ;;
+    dnf)
+      pkg_update dnf
+      sudo dnf install -y "${pkgs[@]}"
+      ;;
+    yum)
+      pkg_update yum
+      sudo yum install -y "${pkgs[@]}"
+      ;;
+    zypper)
+      pkg_update zypper
+      sudo zypper --non-interactive install --auto-agree-with-licenses "${pkgs[@]}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+deps_nvidia_packages() {
+  local family="$1"
+  local backend="$2"
+  case "$family" in
+    arch) echo "nvidia-open-dkms nvidia-utils" ;;
+    debian) echo "nvidia-driver" ;;
+    fedora) echo "akmod-nvidia xorg-x11-drv-nvidia xorg-x11-drv-nvidia-libs" ;;
+    rhel)
+      if [[ "$backend" == yum ]]; then
+        echo "kmod-nvidia nvidia-driver"
+      else
+        echo "akmod-nvidia xorg-x11-drv-nvidia xorg-x11-drv-nvidia-libs"
+      fi
+      ;;
+    suse) echo "nvidia-computeG06 nvidia-glG06" ;;
+    *)
+      case "$backend" in
+        apt) echo "nvidia-driver" ;;
+        dnf|yum) echo "akmod-nvidia xorg-x11-drv-nvidia xorg-x11-drv-nvidia-libs" ;;
+        zypper) echo "nvidia-computeG06 nvidia-glG06" ;;
+        *) echo "" ;;
+      esac
+      ;;
+  esac
+}
+
+deps_cuda_packages() {
+  local family="$1"
+  local backend="$2"
+  case "$family" in
+    arch) echo "cuda" ;;
+    debian) echo "nvidia-cuda-toolkit" ;;
+    fedora|rhel|suse) echo "cuda" ;;
+    *)
+      case "$backend" in
+        apt) echo "nvidia-cuda-toolkit" ;;
+        dnf|yum|zypper) echo "cuda" ;;
+        *) echo "" ;;
+      esac
+      ;;
+  esac
+}
+
+deps_nvidia_manual_hint() {
+  local family="$1"
+  local backend="$2"
+  echo "Could not determine NVIDIA driver packages for distro=${family} pkg=${backend}."
+  case "$backend" in
+    apt) echo "Try: sudo apt install nvidia-driver" ;;
+    dnf|yum) echo "Try: enable RPM Fusion, then sudo ${backend} install akmod-nvidia" ;;
+    zypper) echo "Try: sudo zypper install nvidia-computeG06 nvidia-glG06" ;;
+    pacman) echo "Try: sudo pacman -S nvidia-open-dkms nvidia-utils" ;;
+    *) echo "Install the NVIDIA proprietary driver, then re-run: enodios deps" ;;
+  esac
+}
+
+deps_install_tools() {
+  local backend="$1"
+  pkg_install "$backend" curl git
+}
+
+deps_install_nvidia() {
+  local family="$1"
+  local backend="$2"
+  local -a pkgs=()
+  read -ra pkgs <<< "$(deps_nvidia_packages "$family" "$backend")"
+  if [[ ${#pkgs[@]} -eq 0 || -z "${pkgs[0]}" ]]; then
+    deps_nvidia_manual_hint "$family" "$backend"
+    return 1
+  fi
+  if [[ "$family" == arch ]]; then
+    echo "Arch: installing open NVIDIA driver (use nvidia-dkms for proprietary)."
+  elif [[ "$family" == rhel && "$backend" != yum ]]; then
+    echo "RHEL family: enable RPM Fusion if akmod-nvidia is not found."
+  fi
+  pkg_install "$backend" "${pkgs[@]}"
+}
+
+deps_install_cuda_toolkit() {
+  local family="$1"
+  local backend="$2"
+  local -a pkgs=()
+  read -ra pkgs <<< "$(deps_cuda_packages "$family" "$backend")"
+  [[ ${#pkgs[@]} -gt 0 && -n "${pkgs[0]}" ]] || return 1
+  pkg_install "$backend" "${pkgs[@]}"
+}
+
+deps_status() {
+  local family backend missing_tools=0 missing_nvidia=0 missing_cuda=0
+  family="$(os_family)"
+  backend="$(pkg_backend)"
+
+  echo "distro: ${family}"
+  echo "pkg:    ${backend}"
+  echo ""
+
+  echo "== Required =="
+  if command -v curl &>/dev/null; then
+    echo "OK:   curl"
+  else
+    echo "MISS: curl"
+    missing_tools=1
+  fi
+  if command -v git &>/dev/null; then
+    echo "OK:   git"
+  else
+    echo "MISS: git"
+    missing_tools=1
+  fi
+  if nvidia_smi_ok; then
+    echo "OK:   nvidia-smi ($(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null | head -1))"
+  else
+    echo "MISS: nvidia-smi (NVIDIA driver required for GPU inference)"
+    missing_nvidia=1
+  fi
+
+  echo ""
+  echo "== Optional =="
+  if nvcc_ok; then
+    if command -v nvcc &>/dev/null; then
+      echo "OK:   nvcc (CUDA toolkit — FlashInfer speedup)"
+    else
+      echo "OK:   nvcc at /opt/cuda/bin/nvcc (set CUDA_HOME=/opt/cuda)"
+    fi
+  else
+    echo "MISS: CUDA toolkit (optional — PyTorch fallback works without nvcc)"
+    missing_cuda=1
+  fi
+
+  DEPS_MISSING_TOOLS=$missing_tools
+  DEPS_MISSING_NVIDIA=$missing_nvidia
+  DEPS_MISSING_CUDA=$missing_cuda
+  DEPS_FAMILY=$family
+  DEPS_BACKEND=$backend
+  export DEPS_MISSING_TOOLS DEPS_MISSING_NVIDIA DEPS_MISSING_CUDA DEPS_FAMILY DEPS_BACKEND
+
+  [[ "$missing_tools" -eq 0 && "$missing_nvidia" -eq 0 ]]
+}
+
+deps_usage() {
+  cat <<EOF
+Usage: enodios deps [--check|--install]
+
+  Check OS packages needed for NVIDIA GPU inference.
+
+  Required: curl, git, working nvidia-smi (NVIDIA driver)
+  Optional: CUDA toolkit (nvcc) for optional FlashInfer speedup
+
+  Package managers: pacman, apt, dnf, yum, zypper (auto-detected)
+
+  --check    Exit 0 if required deps OK, 1 if missing
+  --install  Install missing packages without prompting (requires sudo)
+
+  install runs this check and prompts automatically.
+  ENODIOS_DEPS=allow|skip  non-interactive install behavior
+EOF
+}
+
+maybe_ensure_os_deps() {
+  local mode="${1:-prompt}"
+  local family backend
+
+  echo "== OS dependencies =="
+  if deps_status; then
+    if [[ "$DEPS_MISSING_CUDA" -eq 1 && "$mode" != check ]]; then
+      echo ""
+      echo "Optional CUDA toolkit not installed (not required)."
+    fi
+    return 0
+  fi
+
+  family="$DEPS_FAMILY"
+  backend="$DEPS_BACKEND"
+  if [[ "$backend" == unknown ]]; then
+    echo "ERROR: no supported package manager (apt, dnf, yum, zypper, pacman)."
+    return 1
+  fi
+  echo ""
+
+  case "$mode" in
+    check) return 1 ;;
+    install)
+      ;;
+    *)
+      if [[ "${ENODIOS_DEPS:-}" == skip ]]; then
+        echo "Required dependencies missing (ENODIOS_DEPS=skip)."
+        return 1
+      fi
+      if [[ "${ENODIOS_DEPS:-}" != allow ]]; then
+        if [[ ! -t 0 ]]; then
+          echo "Required dependencies missing — run: enodios deps --install"
+          return 1
+        fi
+      fi
+      ;;
+  esac
+
+  local do_tools=0 do_nvidia=0 do_cuda=0
+  [[ "$DEPS_MISSING_TOOLS" -eq 1 ]] && do_tools=1
+  [[ "$DEPS_MISSING_NVIDIA" -eq 1 ]] && do_nvidia=1
+
+  if [[ "$mode" == prompt && "${ENODIOS_DEPS:-}" != allow ]]; then
+    if [[ "$do_tools" -eq 1 || "$do_nvidia" -eq 1 ]]; then
+      local ans
+      read -r -p "Install missing required OS packages? [Y/n]: " ans
+      case "${ans,,}" in
+        n|no) echo "Skipped. Fix manually: enodios deps"; return 1 ;;
+      esac
+    fi
+    if [[ "$DEPS_MISSING_CUDA" -eq 1 ]]; then
+      local ans_cuda
+      read -r -p "Install optional CUDA toolkit (nvcc)? [y/N]: " ans_cuda
+      case "${ans_cuda,,}" in
+        y|yes) do_cuda=1 ;;
+      esac
+    fi
+  elif [[ "$mode" == install || "${ENODIOS_DEPS:-}" == allow ]]; then
+    :
+  fi
+
+  if [[ "$do_tools" -eq 1 ]]; then
+    echo ""
+    echo "Installing curl + git..."
+    deps_install_tools "$backend" || return 1
+  fi
+  if [[ "$do_nvidia" -eq 1 ]]; then
+    echo ""
+    echo "Installing NVIDIA driver packages..."
+    deps_install_nvidia "$family" "$backend" || return 1
+    echo ""
+    echo "NOTE: NVIDIA driver install may require a reboot before nvidia-smi works."
+    if ! nvidia_smi_ok; then
+      echo "Reboot, then run: enodios deps && enodios install"
+      return 1
+    fi
+  fi
+  if [[ "$do_cuda" -eq 1 ]]; then
+    echo ""
+    echo "Installing CUDA toolkit..."
+    deps_install_cuda_toolkit "$family" "$backend" || true
+  fi
+
+  echo ""
+  deps_status
+}
+
+cmd_deps() {
+  require_linux
+  local mode=prompt
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --check) mode=check; shift ;;
+      --install) mode=install; shift ;;
+      -h|--help) deps_usage; return 0 ;;
+      *) echo "Unknown option: $1"; deps_usage; exit 1 ;;
+    esac
+  done
+  maybe_ensure_os_deps "$mode"
 }
 
 require_gpu() {
@@ -218,6 +584,14 @@ cmd_update() {
 
 cmd_install() {
   require_linux
+  maybe_ensure_os_deps prompt || {
+    echo ""
+    echo "ERROR: required OS dependencies missing."
+    echo "  enodios deps"
+    echo "  enodios deps --install"
+    exit 1
+  }
+  echo ""
   echo "== GPU =="
   require_gpu || true
   ensure_uv
@@ -1094,6 +1468,13 @@ cmd_status() {
 
 main() {
   case "${1:-help}" in
+    deps)
+      shift
+      case "${1:-}" in
+        -h|--help) deps_usage ;;
+        *) cmd_deps "$@" ;;
+      esac
+      ;;
     install) cmd_install ;;
     update)
       shift
