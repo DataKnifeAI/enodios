@@ -1,5 +1,8 @@
 # Enodios
 
+![Enodios — Hermes Agent + vLLM Linux setup](docs/assets/enodios-hero.jpg)
+
+
 **Ἐνόδιος — Hermes of the road.** One-script Linux setup for [Hermes Agent](https://github.com/NousResearch/hermes-agent) on **your GPU** via [vLLM](https://github.com/vllm-project/vllm).
 
 Local inference. Fast tool calling. No cloud API keys.
